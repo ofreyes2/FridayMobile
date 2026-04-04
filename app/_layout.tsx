@@ -1,7 +1,7 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, Redirect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { View, Text } from 'react-native';
 import 'react-native-reanimated';
 
@@ -16,14 +16,16 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const authChecked = useRef(false);
 
   useEffect(() => {
-    // Check initial session
-    const checkSession = async () => {
-      try {
-        console.log('[RootLayout] Checking Supabase session...');
-        const { data: { session } } = await supabase.auth.getSession();
+    // Only check auth once on mount
+    if (authChecked.current) return;
+    authChecked.current = true;
 
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      try {
         if (session?.user) {
           console.log('[RootLayout] User authenticated:', session.user.email);
           // Save user metadata to AsyncStorage for chat screen
@@ -34,8 +36,9 @@ export default function RootLayout() {
             name: userName,
             timezone: 'UTC',
           };
-          await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
-          console.log('[RootLayout] Saved user profile:', profile.name);
+          AsyncStorage.setItem('userProfile', JSON.stringify(profile)).then(() => {
+            console.log('[RootLayout] Saved user profile:', profile.name);
+          });
           setIsAuthenticated(true);
         } else {
           console.log('[RootLayout] No authenticated user');
@@ -45,17 +48,25 @@ export default function RootLayout() {
         console.error('[RootLayout] Error checking session:', error);
         setIsAuthenticated(false);
       }
-    };
-
-    checkSession();
+    });
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         console.log('[RootLayout] Auth state changed:', _event);
+
+        // Ignore INITIAL_SESSION event to prevent infinite loop
+        if (_event === 'INITIAL_SESSION') {
+          console.log('[RootLayout] Ignoring INITIAL_SESSION event');
+          return;
+        }
+
+        // Only respond to real auth changes
         if (session?.user) {
+          console.log('[RootLayout] User logged in:', session.user.email);
           setIsAuthenticated(true);
         } else {
+          console.log('[RootLayout] User logged out');
           setIsAuthenticated(false);
         }
       }
