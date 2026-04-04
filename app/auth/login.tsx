@@ -38,6 +38,8 @@ export default function LoginScreen() {
 
     try {
       await auth.signIn(email.trim(), password);
+      console.log('[Login] User signed in:', email.trim());
+      // Use replace to prevent back navigation to login
       router.replace('/(tabs)/chat');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Login failed';

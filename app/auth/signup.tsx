@@ -52,14 +52,21 @@ export default function SignupScreen() {
 
     try {
       await auth.signUp(email.trim(), password, name.trim());
+      console.log('[Signup] User created:', email.trim());
+
       // After signup, sign in automatically
       await auth.signIn(email.trim(), password);
-      // Save profile to AsyncStorage immediately so it's available in chat screen
+      console.log('[Signup] User signed in:', email.trim());
+
+      // Save profile to AsyncStorage immediately
       const profile = {
         name: name.trim(),
         timezone: 'UTC',
       };
       await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
+      console.log('[Signup] Saving profile:', name.trim());
+
+      // Use replace to prevent back navigation to login
       router.replace('/(tabs)/chat');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Sign up failed';

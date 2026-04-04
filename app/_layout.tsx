@@ -1,7 +1,8 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { View, Text, Animated } from 'react-native';
 import 'react-native-reanimated';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -16,46 +17,50 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Animate pulse while loading
+    if (isAuthenticated === null) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start();
+    }
+  }, [isAuthenticated, pulseAnim]);
 
   useEffect(() => {
     checkAuthStatus();
-    // Listen for auth state changes
-    const {
-      data: { subscription },
-    } = auth.onAuthStateChange((event, session) => {
-      console.log('[RootLayout] Auth event:', event);
-      setIsAuthenticated(!!session);
-    });
-
-    return () => {
-      subscription?.unsubscribe();
-    };
   }, []);
 
   const checkAuthStatus = async () => {
     try {
+      console.log('[RootLayout] Checking Supabase session...');
       const session = await auth.getSession();
 
       if (session?.user) {
-        setIsAuthenticated(true);
         console.log('[RootLayout] User authenticated:', session.user.email);
+        // Save user metadata to AsyncStorage for chat screen
+        const userName = session.user.user_metadata?.name ||
+                         session.user.email?.split('@')[0] ||
+                         'User';
+        const profile: UserProfile = {
+          name: userName,
+          timezone: 'UTC',
+        };
+        await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
+        console.log('[RootLayout] Saved user profile:', profile.name);
+        setIsAuthenticated(true);
       } else {
-        setIsAuthenticated(false);
         console.log('[RootLayout] No authenticated user');
-      }
-
-      // Check onboarding status from local storage
-      const profileJson = await AsyncStorage.getItem('userProfile');
-      if (!profileJson && session?.user) {
-        // If user is authenticated but no local profile, show onboarding
-        setShowOnboarding(true);
+        setIsAuthenticated(false);
       }
     } catch (error) {
       console.error('[RootLayout] Error checking auth status:', error);
-    } finally {
-      setIsLoading(false);
+      setIsAuthenticated(false);
     }
   };
 
@@ -63,8 +68,26 @@ export default function RootLayout() {
     setShowOnboarding(false);
   };
 
-  if (isLoading) {
-    return null;
+  // Show loading screen while checking auth
+  if (isAuthenticated === null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <Animated.Text
+          style={{
+            fontSize: 32,
+            fontWeight: 'bold',
+            letterSpacing: 2,
+            color: Colors.accent,
+            opacity: pulseAnim,
+          }}
+        >
+          F.R.I.D.A.Y.
+        </Animated.Text>
+        <Text style={{ fontSize: 14, color: Colors.textSecondary, marginTop: 16 }}>
+          Initializing...
+        </Text>
+      </View>
+    );
   }
 
   return (
@@ -76,7 +99,7 @@ export default function RootLayout() {
       >
         {isAuthenticated ? (
           <>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </>
         ) : (

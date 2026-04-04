@@ -28,6 +28,7 @@ import {
 } from '@/services/fridayHistory';
 import { fetchOllamaModels } from '@/services/ollamaModels';
 import { useFriday } from '@/hooks/useFriday';
+import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE } from '@/constants/onboarding';
 import { getGreeting, formatDate } from '@/lib/greetings';
@@ -146,13 +147,28 @@ export default function ChatScreen() {
 
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
-    loadSettings();
-    loadModels();
-    initializeSession();
-    checkServerStatus();
+    const initializeChat = async () => {
+      await loadSettings();
+
+      // Fallback: if no profile name, get it from Supabase auth
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && (!userProfile.name || userProfile.name === '')) {
+        const name = user.user_metadata?.name ||
+                     user.email?.split('@')[0] ||
+                     'User';
+        setUserProfile(prev => ({ ...prev, name }));
+        console.log('[ChatScreen] Loaded user name from Supabase:', name);
+      }
+
+      loadModels();
+      initializeSession();
+      checkServerStatus();
+    };
+
+    initializeChat();
     const interval = setInterval(checkServerStatus, 30000);
     return () => clearInterval(interval);
-  }, [loadSettings, loadModels, checkServerStatus]);
+  }, [loadSettings, loadModels, checkServerStatus, userProfile.name]);
 
   // KITT-style scanner animation
   useEffect(() => {
