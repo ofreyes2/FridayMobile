@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Animated,
@@ -27,7 +26,7 @@ import {
   resumeSession,
   ConversationSession,
 } from '@/services/fridayHistory';
-import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize } from '@/services/ollamaModels';
+import { fetchOllamaModels } from '@/services/ollamaModels';
 import { useFriday } from '@/hooks/useFriday';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE } from '@/constants/onboarding';
@@ -45,7 +44,6 @@ const DEFAULT_MODEL = 'llama3.3:70b';
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [availableModels, setAvailableModels] = useState<OllamaModel[]>([]);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [loading, setLoading] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
@@ -89,14 +87,12 @@ export default function ChatScreen() {
     const models = await fetchOllamaModels();
     if (models.length > 0) {
       console.log('[ChatScreen] Found', models.length, 'models');
-      setAvailableModels(models);
       // Set first model as default if it exists
       const firstModelName = models[0]?.model || DEFAULT_MODEL;
       setSelectedModel(firstModelName);
       await AsyncStorage.setItem('selectedModel', firstModelName);
     } else {
       console.log('[ChatScreen] No models found, using default');
-      setAvailableModels([]);
     }
   }, []);
 
@@ -111,7 +107,7 @@ export default function ChatScreen() {
       });
       clearTimeout(timeoutId);
       setServerStatus(response.ok ? 'online' : 'offline');
-    } catch (error) {
+    } catch {
       setServerStatus('offline');
     }
   }, []);
@@ -162,7 +158,7 @@ export default function ChatScreen() {
         ),
       ]).start();
     }
-  }, [serverStatus]);
+  }, [serverStatus, dot1Anim, dot2Anim, dot3Anim, dot4Anim, dot5Anim]);
 
   // Pulse animation for voice mode FAB
   useEffect(() => {
@@ -283,22 +279,6 @@ export default function ChatScreen() {
     const newMuted = !isMuted;
     setIsMuted(newMuted);
     await AsyncStorage.setItem('isMuted', newMuted.toString());
-  };
-
-  const getUserContext = (): string => {
-    const now = new Date();
-    const dateString = now.toLocaleString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true,
-      timeZone: userProfile.timezone,
-    });
-    return `Current date/time: ${dateString} (Timezone: ${userProfile.timezone})\nUser: ${userProfile.name}\n`;
   };
 
   const handleVoiceModeToggle = () => {
@@ -444,13 +424,6 @@ export default function ChatScreen() {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-    });
-  };
-
-  const getDotColor = (anim: Animated.Value) => {
-    return anim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [Colors.accentSecondary, Colors.accent],
     });
   };
 
@@ -667,7 +640,7 @@ export default function ChatScreen() {
                     </Text>
                     {session.records.length > 0 && (
                       <Text style={styles.sessionFirstMessage} numberOfLines={1}>
-                        "{session.records[0].userMessage.substring(0, 50)}..."
+                        &quot;{session.records[0].userMessage.substring(0, 50)}&quot;...
                       </Text>
                     )}
                   </View>

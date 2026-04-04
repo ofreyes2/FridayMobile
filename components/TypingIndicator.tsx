@@ -11,24 +11,6 @@ export function TypingIndicator() {
   const dot3 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const createAnimation = (delay: number) => {
-      return Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(new Animated.Value(0), {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: false,
-          }),
-          Animated.timing(new Animated.Value(1), {
-            toValue: 0,
-            duration: 600,
-            useNativeDriver: false,
-          }),
-        ])
-      );
-    };
-
     Animated.parallel([
       Animated.loop(
         Animated.sequence([

@@ -17,7 +17,6 @@ import { ACCENT_GREEN, ACCENT_BLUE, DARK_BG, HEADER_BG } from '@/constants/theme
 export default function EditorScreen() {
   const [filePath, setFilePath] = useState('');
   const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {

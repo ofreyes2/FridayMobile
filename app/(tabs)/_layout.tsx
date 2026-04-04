@@ -3,7 +3,7 @@ import React from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { ACCENT_GREEN, ACCENT_BLUE, HEADER_BG, INACTIVE_TAB, DARK_BG } from '@/constants/theme';
+import { ACCENT_GREEN, ACCENT_BLUE, HEADER_BG, INACTIVE_TAB } from '@/constants/theme';
 
 export default function TabLayout() {
   return (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,13 +13,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
 import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize } from '@/services/ollamaModels';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE, TIMEZONES } from '@/constants/onboarding';
 import { auth } from '@/lib/auth';
-
-const DEFAULT_MODELS: OllamaModel[] = [];
 
 export default function SettingsScreen() {
   const [selectedModel, setSelectedModel] = useState('');
@@ -37,14 +34,7 @@ export default function SettingsScreen() {
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [timezoneSearchQuery, setTimezoneSearchQuery] = useState('');
 
-  useEffect(() => {
-    const initSettings = async () => {
-      await loadSettings();
-    };
-    initSettings();
-  }, []);
-
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     try {
       console.log('[Settings] Fetching available models from Ollama...');
       const models = await fetchOllamaModels();
@@ -55,9 +45,32 @@ export default function SettingsScreen() {
     } catch (error) {
       console.error('[Settings] Error loading models:', error);
     }
-  };
+  }, []);
 
-  const loadSettings = async () => {
+  const checkServerStatus = useCallback(async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch('http://192.168.1.219:11434/api/tags', {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        setServerStatus('online');
+        // Optionally reload models when server comes online
+      } else {
+        setServerStatus('offline');
+      }
+    } catch {
+      setServerStatus('offline');
+    }
+    setLastChecked(new Date().toLocaleTimeString());
+  }, []);
+
+  const loadSettings = useCallback(async () => {
     try {
       const [model, speak, voice, engine, profileJson, lastRefresh] = await Promise.all([
         AsyncStorage.getItem('selectedModel'),
@@ -97,30 +110,11 @@ export default function SettingsScreen() {
     } catch (error) {
       console.error('Error loading settings:', error);
     }
-  };
+  }, [loadModels, checkServerStatus]);
 
-  const checkServerStatus = async () => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch('http://192.168.1.219:11434/api/tags', {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        setServerStatus('online');
-        await loadModels();
-      } else {
-        setServerStatus('offline');
-      }
-    } catch (error) {
-      setServerStatus('offline');
-    }
-    setLastChecked(new Date().toLocaleTimeString());
-  };
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   const handleModelSelect = async (model: string) => {
     setSelectedModel(model);

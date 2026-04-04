@@ -14,7 +14,6 @@ import {
   Platform,
   StyleSheet,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -127,7 +126,7 @@ export default function LoginScreen() {
 
             {/* Sign Up Link */}
             <View style={styles.signupSection}>
-              <Text style={styles.signupText}>Don't have an account? </Text>
+              <Text style={styles.signupText}>Don&apos;t have an account? </Text>
               <TouchableOpacity onPress={handleSignUp} disabled={loading}>
                 <Text style={styles.signupLink}>Sign Up</Text>
               </TouchableOpacity>
