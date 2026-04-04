@@ -18,33 +18,45 @@ export default function RootLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const checkAuth = async () => {
+    let isMounted = true;
+
+    (async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
+
+        if (!isMounted) return;
+
+        if (error) {
+          setIsAuthenticated(false);
+          return;
+        }
+
+        const session = data?.session;
 
         if (session?.user) {
           const userName = session.user.user_metadata?.name ||
                            session.user.email?.split('@')[0] ||
                            'User';
-          const profile: UserProfile = {
+
+          await AsyncStorage.setItem('userProfile', JSON.stringify({
             name: userName,
             timezone: 'UTC',
-          };
-          await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
-          setIsAuthenticated(true);
+          }));
+
+          if (isMounted) setIsAuthenticated(true);
         } else {
-          setIsAuthenticated(false);
+          if (isMounted) setIsAuthenticated(false);
         }
       } catch (error) {
-        console.error('[RootLayout] Auth error:', error);
-        setIsAuthenticated(false);
+        if (isMounted) setIsAuthenticated(false);
       }
-    };
+    })();
 
-    checkAuth();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Show loading screen while checking auth
   if (isAuthenticated === null) {
     return (
       <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
@@ -58,20 +70,13 @@ export default function RootLayout() {
     );
   }
 
-  // Not authenticated — synchronous redirect (prevents tabs from rendering)
   if (isAuthenticated === false) {
     return <Redirect href="/auth/login" />;
   }
 
-  // Authenticated — show app
   return (
     <ThemeProvider value={DarkTheme}>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: Colors.background },
-        }}
-      >
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
