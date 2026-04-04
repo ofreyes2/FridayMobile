@@ -112,6 +112,38 @@ export default function ChatScreen() {
     }
   }, []);
 
+  // Load settings from async storage
+  const loadSettings = useCallback(async () => {
+    try {
+      const [model, speak, engine, muted, profileJson] = await Promise.all([
+        AsyncStorage.getItem('selectedModel'),
+        AsyncStorage.getItem('autoSpeak'),
+        AsyncStorage.getItem('voiceEngine'),
+        AsyncStorage.getItem('isMuted'),
+        AsyncStorage.getItem('userProfile'),
+      ]);
+      if (model) setSelectedModel(model);
+      if (speak !== null) setAutoSpeak(speak === 'true');
+      if (engine === 'moira') {
+        setVoiceEngine('moira');
+      } else {
+        setVoiceEngine('elevenlabs');
+      }
+      if (muted !== null) setIsMuted(muted === 'true');
+      if (profileJson) {
+        try {
+          const profile = JSON.parse(profileJson);
+          setUserProfile(profile);
+          console.log('[ChatScreen] Loaded user profile:', profile.name);
+        } catch (e) {
+          console.error('Error parsing user profile:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
+  }, []);
+
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
     loadSettings();
@@ -120,7 +152,7 @@ export default function ChatScreen() {
     checkServerStatus();
     const interval = setInterval(checkServerStatus, 30000);
     return () => clearInterval(interval);
-  }, [loadModels, checkServerStatus]);
+  }, [loadSettings, loadModels, checkServerStatus]);
 
   // KITT-style scanner animation
   useEffect(() => {
@@ -224,36 +256,6 @@ export default function ChatScreen() {
       console.error('Error loading sessions:', error);
     }
   };
-
-  const loadSettings = async () => {
-    try {
-      const [model, speak, engine, muted, profileJson] = await Promise.all([
-        AsyncStorage.getItem('selectedModel'),
-        AsyncStorage.getItem('autoSpeak'),
-        AsyncStorage.getItem('voiceEngine'),
-        AsyncStorage.getItem('isMuted'),
-        AsyncStorage.getItem('userProfile'),
-      ]);
-      if (model) setSelectedModel(model);
-      if (speak !== null) setAutoSpeak(speak === 'true');
-      if (engine === 'moira') {
-        setVoiceEngine('moira');
-      } else {
-        setVoiceEngine('elevenlabs');
-      }
-      if (muted !== null) setIsMuted(muted === 'true');
-      if (profileJson) {
-        try {
-          setUserProfile(JSON.parse(profileJson));
-        } catch (e) {
-          console.error('Error parsing user profile:', e);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-    }
-  };
-
 
   const speakText = async (text: string) => {
     if (isMuted) return;

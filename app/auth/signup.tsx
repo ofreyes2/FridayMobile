@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '@/lib/auth';
 import { Colors } from '@/constants/theme';
 
@@ -53,6 +54,12 @@ export default function SignupScreen() {
       await auth.signUp(email.trim(), password, name.trim());
       // After signup, sign in automatically
       await auth.signIn(email.trim(), password);
+      // Save profile to AsyncStorage immediately so it's available in chat screen
+      const profile = {
+        name: name.trim(),
+        timezone: 'UTC',
+      };
+      await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
       router.replace('/(tabs)/chat');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Sign up failed';
