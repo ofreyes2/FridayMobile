@@ -23,7 +23,7 @@ export default function RootLayout() {
     if (authChecked.current) return;
     authChecked.current = true;
 
-    // Get initial session
+    // Get initial session (one-time check)
     supabase.auth.getSession().then(({ data: { session } }) => {
       try {
         if (session?.user) {
@@ -49,32 +49,6 @@ export default function RootLayout() {
         setIsAuthenticated(false);
       }
     });
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        console.log('[RootLayout] Auth state changed:', _event);
-
-        // Ignore INITIAL_SESSION event to prevent infinite loop
-        if (_event === 'INITIAL_SESSION') {
-          console.log('[RootLayout] Ignoring INITIAL_SESSION event');
-          return;
-        }
-
-        // Only respond to real auth changes
-        if (session?.user) {
-          console.log('[RootLayout] User logged in:', session.user.email);
-          setIsAuthenticated(true);
-        } else {
-          console.log('[RootLayout] User logged out');
-          setIsAuthenticated(false);
-        }
-      }
-    );
-
-    return () => {
-      subscription?.unsubscribe();
-    };
   }, []);
 
   // Show loading screen while checking auth
