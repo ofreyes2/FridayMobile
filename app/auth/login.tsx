@@ -14,10 +14,12 @@ import {
   Platform,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { auth } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 
 export default function LoginScreen() {
@@ -26,6 +28,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState('');
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -52,6 +56,32 @@ export default function LoginScreen() {
 
   const handleSignUp = () => {
     router.push('/auth/signup');
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Email Required', 'Please enter your email address to reset your password');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetConfirm('');
+
+    try {
+      await supabase.auth.resetPasswordForEmail(email.trim());
+      console.log('[Login] Password reset email sent to:', email.trim());
+      setResetConfirm('✓ Reset link sent to your email');
+      // Clear the confirmation message after 5 seconds
+      setTimeout(() => {
+        setResetConfirm('');
+      }, 5000);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to send reset email';
+      Alert.alert('Error', errorMsg);
+      console.error('[ForgotPassword]', errorMsg);
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   return (
@@ -118,6 +148,22 @@ export default function LoginScreen() {
                 <Text style={styles.loginButtonText}>Sign In</Text>
               )}
             </TouchableOpacity>
+
+            {/* Forgot Password Link */}
+            <TouchableOpacity
+              onPress={handleForgotPassword}
+              disabled={resetLoading}
+              style={styles.forgotPasswordContainer}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            {/* Reset Confirmation Message */}
+            {resetConfirm && (
+              <View style={styles.confirmationBox}>
+                <Text style={styles.confirmationText}>{resetConfirm}</Text>
+              </View>
+            )}
 
             {/* Divider */}
             <View style={styles.divider}>
@@ -263,6 +309,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: Colors.accent,
+  },
+  forgotPasswordContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    color: Colors.accent,
+    fontWeight: '500',
+  },
+  confirmationBox: {
+    backgroundColor: '#1A5A3A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#4CAF50',
+  },
+  confirmationText: {
+    fontSize: 13,
+    color: '#4CAF50',
+    fontWeight: '500',
   },
   footer: {
     marginTop: 32,
