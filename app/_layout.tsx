@@ -1,5 +1,5 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState, useRef } from 'react';
 import { View, Text, Animated } from 'react-native';
@@ -16,9 +16,18 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  const router = useRouter();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (isAuthenticated === false) {
+      console.log('[RootLayout] Redirecting to login...');
+      router.replace('/auth/login');
+    }
+  }, [isAuthenticated, router]);
 
   useEffect(() => {
     // Animate pulse while loading
@@ -94,6 +103,7 @@ export default function RootLayout() {
     <ThemeProvider value={DarkTheme}>
       <Stack
         screenOptions={{
+          headerShown: false,
           contentStyle: { backgroundColor: Colors.background },
         }}
       >
