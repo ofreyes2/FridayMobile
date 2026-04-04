@@ -21,6 +21,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '@/lib/auth';
 import { Colors } from '@/constants/theme';
 
+// Password validation requirements
+const PASSWORD_REQUIREMENTS = {
+  minLength: { regex: /.{8,}/, label: '8+ characters' },
+  uppercase: { regex: /[A-Z]/, label: 'Uppercase letter' },
+  lowercase: { regex: /[a-z]/, label: 'Lowercase letter' },
+  number: { regex: /[0-9]/, label: 'Number' },
+  special: { regex: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/, label: 'Special character' },
+};
+
 export default function SignupScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -29,6 +38,28 @@ export default function SignupScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Calculate password strength
+  const getPasswordStrength = (pwd: string) => {
+    if (!pwd) return { strength: 'none', count: 0, met: {} };
+
+    const met: { [key: string]: boolean } = {};
+    let count = 0;
+
+    Object.entries(PASSWORD_REQUIREMENTS).forEach(([key, req]) => {
+      const isMet = req.regex.test(pwd);
+      met[key] = isMet;
+      if (isMet) count++;
+    });
+
+    if (count === 0) return { strength: 'none', count: 0, met };
+    if (count <= 2) return { strength: 'weak', count, met };
+    if (count < 5) return { strength: 'fair', count, met };
+    return { strength: 'strong', count, met };
+  };
+
+  const passwordStrength = getPasswordStrength(password);
+  const isPasswordValid = passwordStrength.strength === 'strong';
 
   const handleSignup = async () => {
     // Validation
@@ -42,8 +73,8 @@ export default function SignupScreen() {
       return;
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    if (!isPasswordValid) {
+      setError('Password does not meet all requirements');
       return;
     }
 
@@ -54,20 +85,11 @@ export default function SignupScreen() {
       await auth.signUp(email.trim(), password, name.trim());
       console.log('[Signup] User created:', email.trim());
 
-      // After signup, sign in automatically
-      await auth.signIn(email.trim(), password);
-      console.log('[Signup] User signed in:', email.trim());
-
-      // Save profile to AsyncStorage immediately
-      const profile = {
-        name: name.trim(),
-        timezone: 'UTC',
-      };
-      await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
-      console.log('[Signup] Saving profile:', name.trim());
-
-      // Use replace to prevent back navigation to login
-      router.replace('/(tabs)/chat');
+      // Redirect to email verification screen
+      router.replace({
+        pathname: '/auth/verify',
+        params: { email: email.trim() },
+      });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Sign up failed';
       setError(errorMsg);
@@ -139,7 +161,77 @@ export default function SignupScreen() {
                 editable={!loading}
                 secureTextEntry
               />
-              <Text style={styles.hint}>At least 8 characters</Text>
+
+              {/* Password Strength Indicator */}
+              {password && (
+                <View style={styles.strengthContainer}>
+                  <View style={styles.strengthBar}>
+                    <View
+                      style={[
+                        styles.strengthFill,
+                        {
+                          width: `${(passwordStrength.count / 5) * 100}%`,
+                          backgroundColor:
+                            passwordStrength.strength === 'weak'
+                              ? '#FF6B6B'
+                              : passwordStrength.strength === 'fair'
+                              ? '#FFD93D'
+                              : '#4CAF50',
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.strengthText,
+                      {
+                        color:
+                          passwordStrength.strength === 'weak'
+                            ? '#FF6B6B'
+                            : passwordStrength.strength === 'fair'
+                            ? '#FFD93D'
+                            : '#4CAF50',
+                      },
+                    ]}
+                  >
+                    {passwordStrength.strength === 'weak'
+                      ? 'Weak'
+                      : passwordStrength.strength === 'fair'
+                      ? 'Fair'
+                      : 'Strong'}
+                  </Text>
+                </View>
+              )}
+
+              {/* Requirements Checklist */}
+              {password && (
+                <View style={styles.requirementsContainer}>
+                  {Object.entries(PASSWORD_REQUIREMENTS).map(([key, req]) => (
+                    <View key={key} style={styles.requirementItem}>
+                      <Text
+                        style={[
+                          styles.requirementCheck,
+                          {
+                            color: passwordStrength.met[key] ? '#4CAF50' : '#999',
+                          },
+                        ]}
+                      >
+                        {passwordStrength.met[key] ? '✓' : '○'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.requirementLabel,
+                          {
+                            color: passwordStrength.met[key] ? Colors.textPrimary : Colors.textMuted,
+                          },
+                        ]}
+                      >
+                        {req.label}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
 
             {/* Confirm Password Input */}
@@ -165,9 +257,12 @@ export default function SignupScreen() {
 
             {/* Sign Up Button */}
             <TouchableOpacity
-              style={[styles.signupButton, loading && styles.buttonDisabled]}
+              style={[
+                styles.signupButton,
+                (loading || !isPasswordValid) && styles.buttonDisabled,
+              ]}
               onPress={handleSignup}
-              disabled={loading}
+              disabled={loading || !isPasswordValid}
             >
               {loading ? (
                 <ActivityIndicator color={Colors.background} />
@@ -285,5 +380,43 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: 'center',
     lineHeight: 16,
+  },
+  strengthContainer: {
+    gap: 8,
+    marginTop: 8,
+  },
+  strengthBar: {
+    height: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  strengthFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  strengthText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  requirementsContainer: {
+    gap: 6,
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+  },
+  requirementItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  requirementCheck: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    width: 16,
+  },
+  requirementLabel: {
+    fontSize: 12,
   },
 });

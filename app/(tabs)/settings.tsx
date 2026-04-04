@@ -16,7 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize } from '@/services/ollamaModels';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE, TIMEZONES } from '@/constants/onboarding';
-import { auth } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 
 export default function SettingsScreen() {
   const [selectedModel, setSelectedModel] = useState('');
@@ -177,8 +177,11 @@ export default function SettingsScreen() {
           text: 'Sign Out',
           onPress: async () => {
             try {
-              await auth.signOut();
+              await supabase.auth.signOut();
+              // Small delay to ensure Supabase session is fully cleared
+              await new Promise(resolve => setTimeout(resolve, 100));
               // Navigation will be handled by the auth state listener in _layout.tsx
+              console.log('[Settings] User signed out');
             } catch (error) {
               console.error('Error signing out:', error);
               Alert.alert('Error', 'Failed to sign out');

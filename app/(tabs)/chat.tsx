@@ -13,9 +13,20 @@ import {
   Alert,
   Modal,
   FlatList,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Clipboard from 'expo-clipboard';
+// Conditional import for Voice - native module not available in Expo Go
+let Voice: any = null;
+try {
+  Voice = require('@react-native-voice/voice').default;
+} catch (e) {
+  console.log('[ChatScreen] Voice native module not available - using Expo Go');
+}
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { speakWithFriday } from '@/services/voice';
 import { recordAndTranscribe } from '@/services/voiceInput';
@@ -38,6 +49,9 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  imageBase64?: string;
+  fileName?: string;
+  fileContent?: string;
 }
 
 const DEFAULT_MODEL = 'llama3.3:70b';
@@ -59,6 +73,16 @@ export default function ChatScreen() {
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const [attachedImage, setAttachedImage] = useState<{ uri: string; base64: string } | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
+  const [isVoiceListening, setIsVoiceListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [isVoiceConversation, setIsVoiceConversation] = useState(false);
+  const [voiceConversationStatus, setVoiceConversationStatus] = useState<'listening' | 'thinking' | 'speaking' | null>(null);
+  const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceConversationRef = useRef(false);
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
@@ -74,6 +98,7 @@ export default function ChatScreen() {
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const voicePulseAnim = useRef(new Animated.Value(0)).current;
   const dot1Anim = useRef(new Animated.Value(0)).current;
   const dot2Anim = useRef(new Animated.Value(0)).current;
   const dot3Anim = useRef(new Animated.Value(0)).current;
@@ -82,10 +107,29 @@ export default function ChatScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
   const modalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Detect if a model supports vision
+  const isVisionModel = (modelName: string): boolean => {
+    const lowerName = modelName.toLowerCase();
+    return (
+      lowerName.includes('vision') ||
+      lowerName.includes('llava') ||
+      lowerName.includes('moondream') ||
+      lowerName.includes('qwen-vl') ||
+      lowerName.includes('minicpm-v') ||
+      lowerName.includes('qwen2-vl')
+    );
+  };
+
+  // Find available vision models
+  const findVisionModels = (): any[] => {
+    return availableModels.filter(model => isVisionModel(model.model || ''));
+  };
+
   // Load models from Ollama
   const loadModels = useCallback(async () => {
     console.log('[ChatScreen] Fetching available models from Ollama...');
     const models = await fetchOllamaModels();
+    setAvailableModels(models);
     if (models.length > 0) {
       console.log('[ChatScreen] Found', models.length, 'models');
       // Set first model as default if it exists
@@ -144,6 +188,84 @@ export default function ChatScreen() {
       console.error('Error loading settings:', error);
     }
   }, []);
+
+  // Initialize Voice Recognition (guarded for Expo Go)
+  useEffect(() => {
+    if (!Voice) return;
+
+    Voice.onSpeechStart = () => {
+      console.log('[ChatScreen] Voice recognition started');
+      setIsVoiceListening(true);
+      if (isVoiceConversation) {
+        setVoiceConversationStatus('listening');
+      }
+    };
+
+    Voice.onSpeechRecognized = () => {
+      console.log('[ChatScreen] Voice recognized');
+    };
+
+    Voice.onSpeechEnd = () => {
+      console.log('[ChatScreen] Voice recognition ended');
+      setIsVoiceListening(false);
+
+      // In voice conversation mode, wait for silence threshold before sending
+      if (isVoiceConversation) {
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current);
+        }
+        silenceTimeoutRef.current = setTimeout(() => {
+          console.log('[ChatScreen] Silence detected, auto-sending message');
+          // Auto-send will be handled in the UI
+        }, 1500); // 1.5 second silence threshold
+      }
+    };
+
+    Voice.onSpeechError = (error: any) => {
+      console.error('[ChatScreen] Voice error:', error);
+      setIsVoiceListening(false);
+    };
+
+    Voice.onSpeechResults = (result: any) => {
+      if (result.value && result.value[0]) {
+        const transcript = result.value[0];
+        console.log('[ChatScreen] Transcript:', transcript);
+        setVoiceTranscript(transcript);
+        setInput(transcript);
+      }
+    };
+
+    return () => {
+      if (Voice) {
+        Voice.destroy().catch(() => {});
+      }
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+      }
+    };
+  }, [isVoiceConversation]);
+
+  // Voice microphone pulse animation
+  useEffect(() => {
+    if (isVoiceListening) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(voicePulseAnim, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: false,
+          }),
+          Animated.timing(voicePulseAnim, {
+            toValue: 0,
+            duration: 600,
+            useNativeDriver: false,
+          }),
+        ])
+      ).start();
+    } else {
+      voicePulseAnim.setValue(0);
+    }
+  }, [isVoiceListening, voicePulseAnim]);
 
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
@@ -276,6 +398,9 @@ export default function ChatScreen() {
   const speakText = async (text: string) => {
     if (isMuted) return;
     setIsSpeaking(true);
+    if (isVoiceConversation) {
+      setVoiceConversationStatus('speaking');
+    }
     try {
       if (voiceEngine === 'elevenlabs') {
         await speakWithFriday(text);
@@ -290,6 +415,16 @@ export default function ChatScreen() {
       console.error('Speech error:', error);
     } finally {
       setIsSpeaking(false);
+      // In voice conversation mode, auto-listen after speaking
+      if (isVoiceConversation && Voice) {
+        try {
+          setVoiceConversationStatus('listening');
+          await Voice.start('en-US');
+          console.log('[ChatScreen] Auto-listening after speech');
+        } catch (error) {
+          console.error('[ChatScreen] Error auto-listening:', error);
+        }
+      }
     }
   };
 
@@ -297,6 +432,142 @@ export default function ChatScreen() {
     const newMuted = !isMuted;
     setIsMuted(newMuted);
     await AsyncStorage.setItem('isMuted', newMuted.toString());
+  };
+
+  const handleMicrophoneToggle = async () => {
+    if (!Voice) {
+      Alert.alert(
+        'Voice Not Available',
+        'Voice recognition requires a development build. The EAS build is in progress. For now, use text input or wait for the dev build to complete.'
+      );
+      return;
+    }
+
+    // Toggle voice conversation mode
+    if (isVoiceConversation) {
+      // Exit voice conversation mode
+      setIsVoiceConversation(false);
+      setVoiceConversationStatus(null);
+      voiceConversationRef.current = false;
+      setVoiceTranscript('');
+      setInput('');
+      if (isVoiceListening) {
+        try {
+          await Voice.stop();
+          console.log('[ChatScreen] Exited voice conversation mode');
+        } catch (error) {
+          console.error('[ChatScreen] Error stopping voice:', error);
+        }
+      }
+    } else {
+      // Enter voice conversation mode
+      try {
+        setIsVoiceConversation(true);
+        voiceConversationRef.current = true;
+        setVoiceTranscript('');
+        setInput('');
+        setVoiceConversationStatus('listening');
+        await Voice.start('en-US');
+        console.log('[ChatScreen] Entered voice conversation mode');
+      } catch (error) {
+        console.error('[ChatScreen] Error starting voice conversation:', error);
+        setIsVoiceConversation(false);
+        voiceConversationRef.current = false;
+        Alert.alert('Voice Input Error', 'Could not start voice recognition');
+      }
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        setAttachedImage({
+          uri: asset.uri,
+          base64: asset.base64 || '',
+        });
+        setShowAttachmentMenu(false);
+        console.log('[ChatScreen] Photo taken');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to take photo');
+      console.error('[ChatScreen] Camera error:', error);
+    }
+  };
+
+  const handleChooseImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        setAttachedImage({
+          uri: asset.uri,
+          base64: asset.base64 || '',
+        });
+        setShowAttachmentMenu(false);
+        console.log('[ChatScreen] Image selected');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to select image');
+      console.error('[ChatScreen] Image picker error:', error);
+    }
+  };
+
+  const handleImportFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'text/plain', 'application/msword'],
+      });
+
+      if (!result.canceled && 'name' in result && 'uri' in result && result.name && typeof result.uri === 'string') {
+        // Read file contents
+        const response = await fetch(result.uri);
+        const text = await response.text();
+        setAttachedFile({
+          name: result.name as string,
+          content: text,
+        });
+        setShowAttachmentMenu(false);
+        console.log('[ChatScreen] File imported:', result.name);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to import file');
+      console.error('[ChatScreen] Document picker error:', error);
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text.trim()) {
+        setAttachedFile({
+          name: 'clipboard.txt',
+          content: text,
+        });
+        setShowAttachmentMenu(false);
+        console.log('[ChatScreen] Pasted from clipboard');
+      } else {
+        Alert.alert('Empty', 'Clipboard is empty');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to paste from clipboard');
+      console.error('[ChatScreen] Clipboard error:', error);
+    }
   };
 
   const handleVoiceModeToggle = () => {
@@ -322,22 +593,79 @@ export default function ChatScreen() {
   };
 
   const handleSendMessage = async (message: string) => {
+    // Check if image is attached and model supports vision
+    let finalModel = selectedModel;
+    if (attachedImage && !isVisionModel(selectedModel)) {
+      const visionModels = findVisionModels();
+      if (visionModels.length > 0) {
+        finalModel = visionModels[0].model;
+        console.log('[ChatScreen] Switching to vision model:', finalModel);
+        setSelectedModel(finalModel);
+        await AsyncStorage.setItem('selectedModel', finalModel);
+      } else {
+        // No vision model available - show instructions
+        Alert.alert(
+          'Vision Model Not Found',
+          'To enable image recognition, you need to pull a vision model on KNIGHTSWATCH.\n\nRun this command on KNIGHTSWATCH:\n\nollama pull llava\n\nSupported vision models:\n• llava\n• llava-llama3\n• llava-phi3\n• moondream\n• minicpm-v\n• qwen2-vl',
+          [
+            {
+              text: 'Cancel',
+              onPress: () => {
+                setAttachedImage(null);
+              },
+              style: 'cancel',
+            },
+            {
+              text: 'Try Again',
+              onPress: () => {
+                // User can try again after pulling model
+              },
+            },
+          ]
+        );
+        setAttachedImage(null);
+        setAttachedFile(null);
+        return;
+      }
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: message,
+      ...(attachedImage && { imageBase64: attachedImage.base64 }),
+      ...(attachedFile && { fileName: attachedFile.name, fileContent: attachedFile.content }),
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
+    setVoiceTranscript('');
+    setAttachedImage(null);
+    setAttachedFile(null);
     setLoading(true);
+    if (isVoiceConversation) {
+      setVoiceConversationStatus('thinking');
+    }
     const startTime = Date.now();
 
     try {
       console.log('[ChatScreen] Sending message to Friday:', message);
+      if (attachedImage) {
+        console.log('[ChatScreen] Including image attachment');
+      }
+
+      // Build the message content for Ollama API
+      let messageContent = message;
+      if (attachedFile) {
+        // Include file content in message
+        messageContent = `${message}\n\n[File: ${attachedFile.name}]\n${attachedFile.content}`;
+      }
 
       // Send message directly to Friday (which talks to Ollama)
-      const response = await friday.sendMessage(message);
+      // If image is attached, pass it to the Friday hook
+      const response = attachedImage
+        ? await friday.sendMessageWithImage(messageContent, attachedImage.base64)
+        : await friday.sendMessage(messageContent);
       const duration = Date.now() - startTime;
 
       console.log('[ChatScreen] Got response from Friday:', response);
@@ -359,7 +687,8 @@ export default function ChatScreen() {
         });
       }
 
-      if (autoSpeak) {
+      // Auto-speak in voice conversation mode, or if autoSpeak is enabled
+      if (isVoiceConversation || autoSpeak) {
         await speakText(response);
       }
     } catch (error) {
@@ -532,6 +861,18 @@ export default function ChatScreen() {
                   message.role === 'user' ? styles.userBubble : styles.assistantBubble,
                 ]}
               >
+                {message.imageBase64 && (
+                  <Image
+                    source={{ uri: `data:image/jpeg;base64,${message.imageBase64}` }}
+                    style={styles.messageBubbleImage}
+                  />
+                )}
+                {message.fileName && (
+                  <View style={styles.fileAttachment}>
+                    <Text style={styles.fileIcon}>📄</Text>
+                    <Text style={styles.fileName}>{message.fileName}</Text>
+                  </View>
+                )}
                 <Text
                   style={[
                     styles.messageText,
@@ -541,14 +882,6 @@ export default function ChatScreen() {
                   {message.content}
                 </Text>
               </View>
-              {message.role === 'assistant' && (
-                <TouchableOpacity
-                  style={styles.speakerButton}
-                  onPress={() => speakText(message.content)}
-                >
-                  <Text style={styles.speakerIcon}>🔊</Text>
-                </TouchableOpacity>
-              )}
             </View>
           ))}
           {loading && (
@@ -573,9 +906,73 @@ export default function ChatScreen() {
           )}
         </ScrollView>
 
-        <View style={styles.inputContainer}>
-          {!voiceMode ? (
+        {/* Attachment Preview */}
+        {(attachedImage || attachedFile) && (
+          <View style={styles.attachmentPreviewContainer}>
+            {attachedImage && (
+              <View style={styles.attachmentPreview}>
+                <Image
+                  source={{ uri: attachedImage.uri }}
+                  style={styles.attachmentThumbnail}
+                />
+                <TouchableOpacity
+                  style={styles.removeAttachmentButton}
+                  onPress={() => setAttachedImage(null)}
+                >
+                  <Text style={styles.removeAttachmentIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {attachedFile && (
+              <View style={styles.filePreview}>
+                <Text style={styles.filePreviewIcon}>📄</Text>
+                <Text style={styles.filePreviewName}>{attachedFile.name}</Text>
+                <TouchableOpacity
+                  style={styles.removeFileButton}
+                  onPress={() => setAttachedFile(null)}
+                >
+                  <Text style={styles.removeFileIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Voice Conversation Mode Indicator */}
+        {isVoiceConversation && (
+          <View style={styles.voiceConversationIndicator}>
+            <View style={styles.voiceStatusContainer}>
+              {voiceConversationStatus === 'listening' && (
+                <Animated.View
+                  style={{
+                    opacity: voicePulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.6, 1],
+                    }),
+                  }}
+                >
+                  <Text style={styles.voiceStatusText}>🎤 Listening...</Text>
+                </Animated.View>
+              )}
+              {voiceConversationStatus === 'thinking' && (
+                <Text style={styles.voiceStatusText}>💭 Thinking...</Text>
+              )}
+              {voiceConversationStatus === 'speaking' && (
+                <Text style={styles.voiceStatusText}>🔊 Speaking...</Text>
+              )}
+            </View>
+          </View>
+        )}
+
+        <View style={[styles.inputContainer, isVoiceConversation && styles.inputContainerHidden]}>
+          {!voiceMode && !isVoiceConversation ? (
             <>
+              <TouchableOpacity
+                style={styles.attachmentButton}
+                onPress={() => setShowAttachmentMenu(true)}
+              >
+                <Text style={styles.attachmentIcon}>+</Text>
+              </TouchableOpacity>
               <TextInput
                 style={styles.input}
                 placeholder="Type your message..."
@@ -586,6 +983,35 @@ export default function ChatScreen() {
                 maxLength={1000}
                 editable={!loading}
               />
+              <Animated.View
+                style={[
+                  styles.micButton,
+                  !Voice && styles.micButtonDisabled,
+                  {
+                    transform: [
+                      {
+                        scale: isVoiceListening && Voice
+                          ? voicePulseAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [1, 1.15],
+                            })
+                          : 1,
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.micButtonContent,
+                    isVoiceListening && Voice && styles.micButtonListening,
+                  ]}
+                  onPress={handleMicrophoneToggle}
+                  disabled={!Voice}
+                >
+                  <Text style={styles.micIcon}>{isVoiceListening ? '🎤' : '🎙️'}</Text>
+                </TouchableOpacity>
+              </Animated.View>
               <TouchableOpacity
                 style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
                 onPress={handleSend}
@@ -624,6 +1050,112 @@ export default function ChatScreen() {
           )}
         </View>
 
+        {/* Attachment Menu Modal */}
+        <Modal
+          visible={showAttachmentMenu}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowAttachmentMenu(false)}
+        >
+          <View style={styles.attachmentMenuOverlay}>
+            <View style={styles.attachmentMenuContainer}>
+              <View style={styles.attachmentMenuHeader}>
+                <Text style={styles.attachmentMenuTitle}>Add Attachment</Text>
+                <TouchableOpacity onPress={() => setShowAttachmentMenu(false)}>
+                  <Text style={styles.attachmentMenuClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity style={styles.attachmentMenuItem} onPress={handleTakePhoto}>
+                <Text style={styles.attachmentMenuItemIcon}>📷</Text>
+                <View style={styles.attachmentMenuItemText}>
+                  <Text style={styles.attachmentMenuItemTitle}>Take Photo</Text>
+                  <Text style={styles.attachmentMenuItemDesc}>Use your camera</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.attachmentMenuItem} onPress={handleChooseImage}>
+                <Text style={styles.attachmentMenuItemIcon}>🖼️</Text>
+                <View style={styles.attachmentMenuItemText}>
+                  <Text style={styles.attachmentMenuItemTitle}>Choose from Library</Text>
+                  <Text style={styles.attachmentMenuItemDesc}>Select from photos</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.attachmentMenuItem} onPress={handleImportFile}>
+                <Text style={styles.attachmentMenuItemIcon}>📄</Text>
+                <View style={styles.attachmentMenuItemText}>
+                  <Text style={styles.attachmentMenuItemTitle}>Import File</Text>
+                  <Text style={styles.attachmentMenuItemDesc}>PDF, txt, doc</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.attachmentMenuItem} onPress={handlePasteFromClipboard}>
+                <Text style={styles.attachmentMenuItemIcon}>📋</Text>
+                <View style={styles.attachmentMenuItemText}>
+                  <Text style={styles.attachmentMenuItemTitle}>Paste from Clipboard</Text>
+                  <Text style={styles.attachmentMenuItemDesc}>Use copied text</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.attachmentMenuItem, styles.attachmentMenuItemDisabled]}
+                onPress={() => {
+                  Alert.alert(
+                    'Image Generation Coming Soon',
+                    'Image generation will be available soon.\n\nThis will require Stable Diffusion installed on KNIGHTSWATCH.\n\nYou can still send images from your device for analysis.'
+                  );
+                }}
+              >
+                <Text style={styles.attachmentMenuItemIcon}>🎨</Text>
+                <View style={styles.attachmentMenuItemText}>
+                  <Text style={styles.attachmentMenuItemTitle}>Generate Image</Text>
+                  <Text style={styles.attachmentMenuItemDesc}>Coming soon</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Voice Mode FAB - Centered at Bottom */}
+        <View style={styles.voiceModeFabContainer}>
+          <TouchableOpacity
+            style={[
+              styles.voiceModeFab,
+              isVoiceConversation && styles.voiceModeFabActive,
+            ]}
+            onPress={handleMicrophoneToggle}
+          >
+            <Animated.View
+              style={[
+                {
+                  transform: [
+                    {
+                      scale: isVoiceConversation
+                        ? voicePulseAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.2],
+                          })
+                        : 1,
+                    },
+                  ],
+                },
+              ]}
+            >
+              <Text style={styles.voiceModeFabIcon}>
+                {isVoiceConversation ? '✕' : '🎤'}
+              </Text>
+            </Animated.View>
+          </TouchableOpacity>
+          <Text style={styles.voiceModeFabLabel}>
+            {isVoiceConversation ? 'Tap to exit' : 'Voice Mode'}
+          </Text>
+        </View>
+
+        {/* Background overlay when in voice conversation */}
+        {isVoiceConversation && (
+          <View style={styles.voiceConversationOverlay} pointerEvents="none" />
+        )}
       </KeyboardAvoidingView>
 
       {/* History Modal */}
@@ -891,13 +1423,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: 'center',
   },
-  speakerButton: {
-    padding: 6,
-    marginBottom: 4,
-  },
-  speakerIcon: {
-    fontSize: 18,
-  },
   inputContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -1028,5 +1553,273 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#ccc',
     fontStyle: 'italic',
+  },
+  attachmentButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  attachmentIcon: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.background,
+  },
+  attachmentPreviewContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderTopColor: Colors.border,
+    borderTopWidth: 1,
+    backgroundColor: Colors.surface,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  attachmentPreview: {
+    position: 'relative',
+    width: 80,
+    height: 80,
+  },
+  attachmentThumbnail: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#333',
+  },
+  removeAttachmentButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.error,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeAttachmentIcon: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  filePreview: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filePreviewIcon: {
+    fontSize: 32,
+  },
+  filePreviewName: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  removeFileButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.error,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeFileIcon: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  attachmentMenuOverlay: {
+    flex: 1,
+    backgroundColor: '#00000080',
+    justifyContent: 'flex-end',
+  },
+  attachmentMenuContainer: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 0,
+    maxHeight: '80%',
+  },
+  attachmentMenuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomColor: Colors.border,
+    borderBottomWidth: 1,
+  },
+  attachmentMenuTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.accent,
+  },
+  attachmentMenuClose: {
+    fontSize: 28,
+    color: Colors.textMuted,
+    fontWeight: 'bold',
+  },
+  attachmentMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomColor: Colors.border,
+    borderBottomWidth: 1,
+    gap: 16,
+  },
+  attachmentMenuItemIcon: {
+    fontSize: 40,
+  },
+  attachmentMenuItemText: {
+    flex: 1,
+    gap: 4,
+  },
+  attachmentMenuItemTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  attachmentMenuItemDesc: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  attachmentMenuItemDisabled: {
+    opacity: 0.6,
+  },
+  messageBubbleImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  fileAttachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: Colors.background,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  fileIcon: {
+    fontSize: 16,
+  },
+  fileName: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  micButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  micButtonContent: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  micButtonListening: {
+    backgroundColor: Colors.accent,
+    shadowColor: Colors.accent,
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  micIcon: {
+    fontSize: 20,
+  },
+  micButtonDisabled: {
+    opacity: 0.5,
+  },
+  voiceConversationIndicator: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: Colors.surface,
+    borderTopColor: Colors.border,
+    borderTopWidth: 1,
+    alignItems: 'center',
+  },
+  voiceStatusContainer: {
+    paddingVertical: 8,
+  },
+  voiceStatusText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.accent,
+    textAlign: 'center',
+  },
+  inputContainerHidden: {
+    display: 'none',
+  },
+  voiceModeFabContainer: {
+    position: 'absolute',
+    bottom: 90,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  voiceModeFab: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: Colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  voiceModeFabActive: {
+    backgroundColor: Colors.accent,
+    shadowOpacity: 0.7,
+    shadowRadius: 12,
+  },
+  voiceModeFabIcon: {
+    fontSize: 36,
+  },
+  voiceModeFabLabel: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.accent,
+    textAlign: 'center',
+  },
+  voiceConversationOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#00000040',
+    zIndex: 5,
   },
 });

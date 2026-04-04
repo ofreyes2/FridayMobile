@@ -21,3 +21,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+// Session expiry is set to 7 days by default in Supabase admin settings
+// Users will need to log in again after 7 days of inactivity

@@ -36,6 +36,7 @@ export interface UseFridayResult {
 
   // Actions
   sendMessage: (text: string) => Promise<string>
+  sendMessageWithImage: (text: string, imageBase64: string) => Promise<string>
   getSystemPrompt: () => string
   updatePersonality: (personality: Partial<FridayPersonality>) => Promise<void>
   clearMemories: () => Promise<void>
@@ -391,6 +392,218 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
   )
 
   /**
+   * Send message with image attachment to Ollama
+   */
+  const sendMessageWithImage = useCallback(
+    async (userInput: string, imageBase64: string): Promise<string> => {
+      if (!memoryRef.current || !personality) {
+        throw new Error('Friday not initialized')
+      }
+
+      setIsLoading(true)
+      setError(null)
+      const startTime = Date.now()
+
+      try {
+        // Check Ollama health first
+        console.log(`[Friday ${timestamp()}] Checking Ollama connection for image message...`)
+        const isHealthy = await checkOllamaHealth()
+        if (!isHealthy) {
+          throw new Error(
+            `Cannot connect to Ollama at ${options.ollamaEndpoint}. ` +
+            'Please ensure Ollama is running and reachable from your device.'
+          )
+        }
+        console.log(`[Friday ${timestamp()}] Ollama connection OK`)
+
+        // Build context-aware prompt with reasoning mode detection
+        const systemPrompt = buildFridaySystemPrompt(
+          FRIDAY_SYSTEM_PROMPT,
+          personality,
+          recentMemories,
+          options.userSettings,
+          options.ollamaModel,
+          interactionCount,
+          userInput
+        )
+
+        // Add user message to store
+        const userMessage: ConversationMessage = {
+          id: `msg_${Date.now()}_user`,
+          role: 'user',
+          content: userInput,
+          timestamp: Date.now(),
+          source: 'user',
+        }
+        addMessage(userMessage)
+
+        // Store user message
+        console.log(`[Friday ${timestamp()}] Storing user message with image: "${userInput}"`)
+        await memoryRef.current.addConversationMessage('user', userInput, 'user')
+
+        // Call Ollama API with image included via XMLHttpRequest (React Native compatible)
+        const url = `${options.ollamaEndpoint}/api/chat`
+        const requestBody = {
+          model: options.ollamaModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: userInput,
+              images: [imageBase64] // Include image as base64
+            },
+          ],
+          stream: true,
+        }
+
+        console.log(`[Friday ${timestamp()}] Sending streaming request with image to Ollama`)
+        console.log(`[Friday ${timestamp()}] Endpoint: ${url}`)
+        console.log(`[Friday ${timestamp()}] Model: ${options.ollamaModel}`)
+        console.log(`[Friday ${timestamp()}] Image size: ${imageBase64.length} characters`)
+
+        // Use XMLHttpRequest for React Native streaming compatibility
+        const fetchStartTime = Date.now()
+
+        const assistantResponse = await new Promise<string>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          let accumulator = ''
+          let lastProcessedIndex = 0
+
+          // Set 90 second timeout
+          const startTime = Date.now()
+          const checkTimeout = setInterval(() => {
+            if (Date.now() - startTime > 90000) {
+              clearInterval(checkTimeout)
+              xhr.abort()
+              reject(new Error('Request timeout - Ollama took too long to respond'))
+            }
+          }, 1000)
+
+          xhr.open('POST', url, true)
+          xhr.setRequestHeader('Content-Type', 'application/json')
+
+          // Handle streaming progress
+          xhr.onprogress = () => {
+            const currentText = xhr.responseText
+            const newText = currentText.slice(lastProcessedIndex)
+            lastProcessedIndex = currentText.length
+
+            if (!newText) return
+
+            // Split by newline and parse JSONL format
+            const lines = newText.split('\n')
+
+            for (const line of lines) {
+              if (!line.trim()) continue
+
+              try {
+                const json = JSON.parse(line)
+                if (json.message?.content) {
+                  const content = json.message.content
+                  accumulator += content
+
+                  // Log streaming progress
+                  if (accumulator.length % 50 === 0) {
+                    console.log(
+                      `[Friday ${timestamp()}] Received ${accumulator.length} characters`
+                    )
+                  }
+                }
+              } catch (e) {
+                // Skip invalid JSON lines
+              }
+            }
+          }
+
+          xhr.onload = () => {
+            clearInterval(checkTimeout)
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const fetchDuration = Date.now() - fetchStartTime
+              console.log(
+                `[Friday ${timestamp()}] Image streaming completed in ${fetchDuration}ms, total response: ${accumulator.length} chars`
+              )
+              resolve(accumulator)
+            } else {
+              reject(
+                new Error(`Ollama returned error ${xhr.status}: ${xhr.statusText}`)
+              )
+            }
+          }
+
+          xhr.onerror = () => {
+            clearInterval(checkTimeout)
+            reject(new Error(`Network error: ${xhr.statusText}`))
+          }
+
+          xhr.onabort = () => {
+            clearInterval(checkTimeout)
+            reject(new Error('Request aborted'))
+          }
+
+          console.log(`[Friday ${timestamp()}] Streaming response started (with image)`)
+          xhr.send(JSON.stringify(requestBody))
+        })
+
+        if (!assistantResponse) {
+          throw new Error('Ollama returned empty response')
+        }
+
+        // Add assistant message to store
+        const assistantMessage: ConversationMessage = {
+          id: `msg_${Date.now()}_assistant`,
+          role: 'assistant',
+          content: assistantResponse,
+          timestamp: Date.now(),
+          source: 'ollama',
+        }
+        addMessage(assistantMessage)
+
+        // Store conversation message
+        console.log(`[Friday ${timestamp()}] Storing assistant message (image response)`)
+        await memoryRef.current.addConversationMessage(
+          'assistant',
+          assistantResponse,
+          'ollama'
+        )
+
+        // Increment interaction count
+        const newCount = await memoryRef.current.incrementInteractionCount()
+        setInteractionCount(newCount)
+
+        // Extract learnings from the interaction
+        const learnings = extractLearningsFromResponse(
+          userInput,
+          assistantResponse,
+          personality
+        )
+
+        for (const learning of learnings) {
+          await memoryRef.current.addMemory(learning.type, learning.content, learning.score)
+        }
+
+        // Reload recent memories
+        const memories = await memoryRef.current.getRecentMemories(10)
+        setRecentMemories(memories)
+
+        const totalDuration = Date.now() - startTime
+        const ollamaStreamDuration = Date.now() - fetchStartTime
+        console.log(`[Friday ${timestamp()}] ✓ Image message completed successfully (total: ${totalDuration}ms, ollama: ${ollamaStreamDuration}ms)`)
+        return assistantResponse
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        const totalDuration = Date.now() - startTime
+        console.error(`[Friday ${timestamp()}] ✗ Error after ${totalDuration}ms: ${error.message}`)
+        setError(error)
+        throw error
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [personality, recentMemories, options, interactionCount, addMessage, checkOllamaHealth]
+  )
+
+  /**
    * Build system prompt with current context
    */
   const getSystemPrompt = useCallback(() => {
@@ -436,6 +649,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
     error,
     interactionCount,
     sendMessage,
+    sendMessageWithImage,
     getSystemPrompt,
     updatePersonality,
     clearMemories,

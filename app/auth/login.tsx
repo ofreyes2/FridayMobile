@@ -3,7 +3,7 @@
  * Professional authentication screen for F.R.I.D.A.Y.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,9 @@ import { auth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 300; // 5 minutes in seconds
+
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -30,27 +33,121 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetConfirm, setResetConfirm] = useState('');
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [isLockedOut, setIsLockedOut] = useState(false);
+  const [lockoutTimeRemaining, setLockoutTimeRemaining] = useState(0);
+  const [emailNotConfirmed, setEmailNotConfirmed] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+
+  // Handle lockout timer
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (isLockedOut && lockoutTimeRemaining > 0) {
+      interval = setInterval(() => {
+        setLockoutTimeRemaining((prev) => {
+          if (prev <= 1) {
+            setIsLockedOut(false);
+            setFailedAttempts(0);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isLockedOut, lockoutTimeRemaining]);
 
   const handleLogin = async () => {
+    setError('');
+
+    if (isLockedOut) {
+      return;
+    }
+
     if (!email.trim() || !password.trim()) {
       setError('Please enter both email and password');
       return;
     }
 
     setLoading(true);
-    setError('');
 
     try {
       await auth.signIn(email.trim(), password);
       console.log('[Login] User signed in:', email.trim());
+      setFailedAttempts(0);
+      setIsLockedOut(false);
       // Use replace to prevent back navigation to login
       router.replace('/(tabs)/chat');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Login failed';
-      setError(errorMsg);
-      console.error('[LoginScreen]', errorMsg);
+
+      // Check for email not confirmed error
+      if (errorMsg.toLowerCase().includes('email not confirmed') || errorMsg.toLowerCase().includes('email_not_confirmed')) {
+        setEmailNotConfirmed(true);
+        setError('Please verify your email before signing in. Check your inbox for the verification link.');
+      } else {
+        setEmailNotConfirmed(false);
+        const newFailedAttempts = failedAttempts + 1;
+        setFailedAttempts(newFailedAttempts);
+
+        if (newFailedAttempts >= MAX_ATTEMPTS) {
+          setIsLockedOut(true);
+          setLockoutTimeRemaining(LOCKOUT_DURATION);
+          setError('Too many attempts. Try again in 5 minutes');
+        } else {
+          const remainingAttempts = MAX_ATTEMPTS - newFailedAttempts;
+          // Show friendly error message for invalid credentials
+          const friendlyMsg = errorMsg.toLowerCase().includes('invalid') ||
+                              errorMsg.toLowerCase().includes('credentials')
+            ? 'Incorrect email or password'
+            : errorMsg;
+          setError(`${friendlyMsg}. ${remainingAttempts} attempts remaining`);
+        }
+      }
+      console.log('[LoginScreen]', errorMsg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!email.trim()) {
+      Alert.alert('Email Required', 'Please enter your email address');
+      return;
+    }
+
+    setResendingVerification(true);
+    setError('');
+
+    try {
+      // Make a direct request to Supabase auth endpoint to resend confirmation email
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://mtunnqfzryxmiygywqxd.supabase.co';
+      const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_I11kwLYciuddH_w4jEEIRw_Z4k_WVWe';
+
+      const response = await fetch(`${supabaseUrl}/auth/v1/resend`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supabaseKey,
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          type: 'signup',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to resend verification email');
+      }
+
+      console.log('[Login] Verification email resent to:', email.trim());
+      setError('✓ Verification email sent to ' + email.trim());
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to send verification email';
+      setError('Failed to resend: ' + errorMsg);
+      console.log('[ResendVerification]', errorMsg);
+    } finally {
+      setResendingVerification(false);
     }
   };
 
@@ -108,7 +205,10 @@ export default function LoginScreen() {
                 placeholder="your@email.com"
                 placeholderTextColor={Colors.textMuted}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  setError('');
+                }}
                 editable={!loading}
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -123,7 +223,10 @@ export default function LoginScreen() {
                 placeholder="••••••••"
                 placeholderTextColor={Colors.textMuted}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setError('');
+                }}
                 editable={!loading}
                 secureTextEntry
               />
@@ -131,19 +234,43 @@ export default function LoginScreen() {
 
             {/* Error Message */}
             {error && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{error}</Text>
+              <View style={[styles.errorBox, emailNotConfirmed && styles.verificationErrorBox]}>
+                <Text style={[styles.errorText, emailNotConfirmed && styles.verificationErrorText]}>
+                  {error}
+                </Text>
               </View>
+            )}
+
+            {/* Resend Verification Button */}
+            {emailNotConfirmed && (
+              <TouchableOpacity
+                style={[styles.resendButton, resendingVerification && styles.buttonDisabled]}
+                onPress={handleResendVerification}
+                disabled={resendingVerification}
+              >
+                {resendingVerification ? (
+                  <ActivityIndicator color={Colors.background} />
+                ) : (
+                  <Text style={styles.resendButtonText}>Resend Verification Email</Text>
+                )}
+              </TouchableOpacity>
             )}
 
             {/* Login Button */}
             <TouchableOpacity
-              style={[styles.loginButton, loading && styles.buttonDisabled]}
+              style={[
+                styles.loginButton,
+                (loading || isLockedOut) && styles.buttonDisabled,
+              ]}
               onPress={handleLogin}
-              disabled={loading}
+              disabled={loading || isLockedOut}
             >
               {loading ? (
                 <ActivityIndicator color={Colors.background} />
+              ) : isLockedOut ? (
+                <Text style={styles.loginButtonText}>
+                  Try again in {Math.ceil(lockoutTimeRemaining / 60)}:{(lockoutTimeRemaining % 60).toString().padStart(2, '0')}
+                </Text>
               ) : (
                 <Text style={styles.loginButtonText}>Sign In</Text>
               )}
@@ -340,5 +467,24 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: 'center',
     lineHeight: 16,
+  },
+  verificationErrorBox: {
+    backgroundColor: '#FFE5E5',
+    borderLeftColor: '#FF9800',
+  },
+  verificationErrorText: {
+    color: '#FF9800',
+  },
+  resendButton: {
+    backgroundColor: Colors.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  resendButtonText: {
+    color: Colors.background,
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
 });

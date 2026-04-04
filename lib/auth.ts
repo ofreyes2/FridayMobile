@@ -14,6 +14,7 @@ export const auth = {
       email,
       password,
       options: {
+        emailRedirectTo: 'fridaymobile://auth/callback',
         data: { name },
       },
     });

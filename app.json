@@ -10,7 +10,9 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "primaryColor": "#00D4FF",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -21,7 +23,9 @@
       "bundleIdentifier": "com.ofreyes2.FridayMobile",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "This app connects to local Ollama instance for AI processing",
-        "NSBonjourServiceTypes": ["_http._tcp"]
+        "NSBonjourServiceTypes": [
+          "_http._tcp"
+        ]
       },
       "splash": {
         "image": "./assets/splash.png",
@@ -40,7 +44,10 @@
         "backgroundColor": "#0A0A0F"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.ofreyes2.friday"
+      "package": "com.ofreyes2.friday",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -48,6 +55,7 @@
       "backgroundColor": "#0A0A0F"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
       [
         "expo-splash-screen",
@@ -58,11 +66,19 @@
           "backgroundColor": "#0A0A0F"
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "@react-native-voice/voice"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "dd402b66-9862-4062-9aa0-a65acae581d3"
+      }
+    },
+    "owner": "ofreyes2"
   }
 }
