@@ -1,7 +1,7 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, Redirect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import 'react-native-reanimated';
 
@@ -16,19 +16,13 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const authChecked = useRef(false);
 
   useEffect(() => {
-    // Only check auth once on mount
-    if (authChecked.current) return;
-    authChecked.current = true;
-
-    // Get initial session (one-time check)
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const checkAuth = async () => {
       try {
+        const { data: { session } } = await supabase.auth.getSession();
+
         if (session?.user) {
-          console.log('[RootLayout] User authenticated:', session.user.email);
-          // Save user metadata to AsyncStorage for chat screen
           const userName = session.user.user_metadata?.name ||
                            session.user.email?.split('@')[0] ||
                            'User';
@@ -36,19 +30,18 @@ export default function RootLayout() {
             name: userName,
             timezone: 'UTC',
           };
-          AsyncStorage.setItem('userProfile', JSON.stringify(profile)).then(() => {
-            console.log('[RootLayout] Saved user profile:', profile.name);
-          });
+          await AsyncStorage.setItem('userProfile', JSON.stringify(profile));
           setIsAuthenticated(true);
         } else {
-          console.log('[RootLayout] No authenticated user');
           setIsAuthenticated(false);
         }
       } catch (error) {
-        console.error('[RootLayout] Error checking session:', error);
+        console.error('[RootLayout] Auth error:', error);
         setIsAuthenticated(false);
       }
-    });
+    };
+
+    checkAuth();
   }, []);
 
   // Show loading screen while checking auth
