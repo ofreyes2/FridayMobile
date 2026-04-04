@@ -44,6 +44,8 @@ import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE } from '@/constants/onboarding';
 import { getGreeting, formatDate } from '@/lib/greetings';
 import { TypingIndicator } from '@/components/TypingIndicator';
+import { WaveformIcon } from '@/components/WaveformIcon';
+import { AvatarDropdown } from '@/components/AvatarDropdown';
 
 interface Message {
   id: string;
@@ -83,6 +85,7 @@ export default function ChatScreen() {
   const [voiceConversationStatus, setVoiceConversationStatus] = useState<'listening' | 'thinking' | 'speaking' | null>(null);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceConversationRef = useRef(false);
+  const [session, setSession] = useState<any>(null);
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
@@ -266,6 +269,15 @@ export default function ChatScreen() {
       voicePulseAnim.setValue(0);
     }
   }, [isVoiceListening, voicePulseAnim]);
+
+  // Load session from Supabase
+  useEffect(() => {
+    const loadSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setSession(session);
+    };
+    loadSession();
+  }, []);
 
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
@@ -800,23 +812,7 @@ export default function ChatScreen() {
                 </Text>
               </View>
             </View>
-            <View style={styles.headerControls}>
-              <TouchableOpacity style={styles.historyButton} onPress={handleOpenHistory}>
-                <Text style={styles.historyIcon}>📜</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.voiceModeButton}
-                onPress={handleVoiceModeToggle}
-              >
-                <Text style={styles.voiceModeIcon}>{voiceMode ? '🎤' : '📝'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.muteButton}
-                onPress={handleMuteToggle}
-              >
-                <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
-              </TouchableOpacity>
-            </View>
+            <AvatarDropdown session={session} />
           </View>
 
           {/* Greeting and Date */}
@@ -964,90 +960,55 @@ export default function ChatScreen() {
           </View>
         )}
 
+        {/* Copilot-style Input Bar */}
         <View style={[styles.inputContainer, isVoiceConversation && styles.inputContainerHidden]}>
-          {!voiceMode && !isVoiceConversation ? (
-            <>
+          <View style={styles.inputBox}>
+            {/* Attachment button */}
+            <TouchableOpacity
+              style={styles.plusButton}
+              onPress={() => setShowAttachmentMenu(true)}
+            >
+              <Text style={styles.plusButtonText}>+</Text>
+            </TouchableOpacity>
+
+            {/* Text input */}
+            <TextInput
+              style={styles.textInput}
+              placeholder={isVoiceConversation ? "Listening..." : "Type your message..."}
+              placeholderTextColor="#666"
+              value={input}
+              onChangeText={setInput}
+              multiline
+              maxLength={1000}
+              editable={!loading && !isVoiceConversation}
+            />
+
+            {/* Right side: Waveform or Send Arrow */}
+            {input.trim() === '' && !isVoiceConversation ? (
               <TouchableOpacity
-                style={styles.attachmentButton}
-                onPress={() => setShowAttachmentMenu(true)}
+                style={styles.waveformButton}
+                onPress={handleMicrophoneToggle}
+                disabled={!Voice}
               >
-                <Text style={styles.attachmentIcon}>+</Text>
+                <WaveformIcon isActive={false} size={20} />
               </TouchableOpacity>
-              <TextInput
-                style={styles.input}
-                placeholder="Type your message..."
-                placeholderTextColor="#666"
-                value={input}
-                onChangeText={setInput}
-                multiline
-                maxLength={1000}
-                editable={!loading}
-              />
-              <Animated.View
-                style={[
-                  styles.micButton,
-                  !Voice && styles.micButtonDisabled,
-                  {
-                    transform: [
-                      {
-                        scale: isVoiceListening && Voice
-                          ? voicePulseAnim.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [1, 1.15],
-                            })
-                          : 1,
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <TouchableOpacity
-                  style={[
-                    styles.micButtonContent,
-                    isVoiceListening && Voice && styles.micButtonListening,
-                  ]}
-                  onPress={handleMicrophoneToggle}
-                  disabled={!Voice}
-                >
-                  <Text style={styles.micIcon}>{isVoiceListening ? '🎤' : '🎙️'}</Text>
-                </TouchableOpacity>
-              </Animated.View>
+            ) : input.trim() === '' && isVoiceConversation ? (
               <TouchableOpacity
-                style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
+                style={styles.waveformButton}
+                onPress={handleMicrophoneToggle}
+              >
+                <WaveformIcon isActive={true} size={20} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.sendArrowButton, !input.trim() && styles.sendArrowButtonDisabled]}
                 onPress={handleSend}
                 disabled={loading || !input.trim()}
               >
-                <Text style={styles.sendButtonText}>Send</Text>
+                <Text style={styles.sendArrowText}>↑</Text>
               </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <TouchableOpacity
-                style={[styles.recordButton, isRecording && styles.recordButtonActive]}
-                onPress={handleVoiceRecord}
-                disabled={isRecording || loading}
-              >
-                <Text style={styles.recordButtonIcon}>🎙️</Text>
-              </TouchableOpacity>
-              <TextInput
-                style={styles.voiceInputField}
-                placeholder="Tap mic to record..."
-                placeholderTextColor="#666"
-                value={voiceInput}
-                onChangeText={setVoiceInput}
-                multiline
-                maxLength={1000}
-                editable={!isRecording}
-              />
-              <TouchableOpacity
-                style={[styles.sendButton, !voiceInput.trim() && styles.sendButtonDisabled]}
-                onPress={handleVoiceInputSubmit}
-                disabled={loading || !voiceInput.trim() || isRecording}
-              >
-                <Text style={styles.sendButtonText}>Send</Text>
-              </TouchableOpacity>
-            </>
-          )}
+            )}
+          </View>
         </View>
 
         {/* Attachment Menu Modal */}
@@ -1116,41 +1077,6 @@ export default function ChatScreen() {
             </View>
           </View>
         </Modal>
-
-        {/* Voice Mode FAB - Centered at Bottom */}
-        <View style={styles.voiceModeFabContainer}>
-          <TouchableOpacity
-            style={[
-              styles.voiceModeFab,
-              isVoiceConversation && styles.voiceModeFabActive,
-            ]}
-            onPress={handleMicrophoneToggle}
-          >
-            <Animated.View
-              style={[
-                {
-                  transform: [
-                    {
-                      scale: isVoiceConversation
-                        ? voicePulseAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [1, 1.2],
-                          })
-                        : 1,
-                    },
-                  ],
-                },
-              ]}
-            >
-              <Text style={styles.voiceModeFabIcon}>
-                {isVoiceConversation ? '✕' : '🎤'}
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
-          <Text style={styles.voiceModeFabLabel}>
-            {isVoiceConversation ? 'Tap to exit' : 'Voice Mode'}
-          </Text>
-        </View>
 
         {/* Background overlay when in voice conversation */}
         {isVoiceConversation && (
@@ -1424,24 +1350,61 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   inputContainer: {
-    flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopColor: Colors.accentSecondary,
     borderTopWidth: 1,
     backgroundColor: Colors.surface,
-    gap: 8,
   },
-  input: {
-    flex: 1,
-    backgroundColor: Colors.background,
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: Colors.surface,
     borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    maxHeight: 120,
+  },
+  plusButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plusButtonText: {
+    fontSize: 20,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  textInput: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: 15,
+    paddingVertical: 8,
     maxHeight: 100,
+  },
+  waveformButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendArrowButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendArrowButtonDisabled: {
+    opacity: 0.5,
+  },
+  sendArrowText: {
+    fontSize: 24,
+    color: Colors.accent,
+    fontWeight: '600',
   },
   sendButton: {
     backgroundColor: Colors.accent,
@@ -1725,38 +1688,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: '500',
   },
-  micButton: {
-    width: 44,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  micButtonContent: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#444',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  micButtonListening: {
-    backgroundColor: Colors.accent,
-    shadowColor: Colors.accent,
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  micIcon: {
-    fontSize: 20,
-  },
-  micButtonDisabled: {
-    opacity: 0.5,
-  },
   voiceConversationIndicator: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1776,42 +1707,6 @@ const styles = StyleSheet.create({
   },
   inputContainerHidden: {
     display: 'none',
-  },
-  voiceModeFabContainer: {
-    position: 'absolute',
-    bottom: 90,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  voiceModeFab: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: Colors.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: Colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  voiceModeFabActive: {
-    backgroundColor: Colors.accent,
-    shadowOpacity: 0.7,
-    shadowRadius: 12,
-  },
-  voiceModeFabIcon: {
-    fontSize: 36,
-  },
-  voiceModeFabLabel: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.accent,
-    textAlign: 'center',
   },
   voiceConversationOverlay: {
     position: 'absolute',
