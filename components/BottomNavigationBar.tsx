@@ -86,6 +86,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     height: '100%',
+    minHeight: 60,
   },
   activeButton: {
     borderBottomWidth: 2,

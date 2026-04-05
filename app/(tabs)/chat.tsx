@@ -883,7 +883,7 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top + 16 }]}>
           <Text style={styles.conversationTitle}>New conversation ↓</Text>
         </View>
 

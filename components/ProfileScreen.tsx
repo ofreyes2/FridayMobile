@@ -156,6 +156,10 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 8,
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   closeIcon: {
     fontSize: 24,
@@ -217,6 +221,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
+    minHeight: 48,
     borderBottomWidth: 1,
     borderBottomColor: '#1E1E2E',
   },
@@ -252,6 +257,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
+    minHeight: 48,
     marginBottom: 24,
     borderRadius: 12,
     backgroundColor: '#12121A',

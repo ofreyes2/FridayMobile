@@ -113,7 +113,7 @@ export function NavigationDrawer({
           styles.drawer,
           {
             transform: [{ translateX: slideAnim }],
-            paddingTop: insets.top + 8,
+            paddingTop: insets.top + 16,
           },
         ]}
       >
@@ -208,8 +208,11 @@ const styles = StyleSheet.create({
   newButton: {
     backgroundColor: '#00D4FF',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 6,
+    minHeight: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   newButtonText: {
     fontSize: 12,
@@ -239,6 +242,8 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     borderRadius: 8,
     backgroundColor: '#1A1A22',
+    minHeight: 48,
+    justifyContent: 'center',
   },
   sessionTitle: {
     fontSize: 13,
@@ -271,6 +276,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 12,
+    minHeight: 64,
     borderTopWidth: 1,
     borderTopColor: '#1E1E2E',
     gap: 12,
