@@ -7,83 +7,148 @@ export interface Message {
   imageBase64?: string;
   fileName?: string;
   fileContent?: string;
-  timestamp: number;
+  created_at: string;
 }
 
-export interface ConversationSession {
+export interface Session {
   id: string;
   user_id: string;
   title: string;
   created_at: string;
   last_message_at: string;
-  messages: Message[];
+  message_count: number;
 }
 
-export interface GroupedConversations {
-  today: ConversationSession[];
-  yesterday: ConversationSession[];
-  past7days: ConversationSession[];
-  older: ConversationSession[];
+export interface GroupedSessions {
+  today: Session[];
+  yesterday: Session[];
+  past7days: Session[];
+  older: Session[];
 }
 
 /**
- * Create a new conversation session in Supabase
+ * Create a new conversation session
  */
-export async function createConversation(
+export async function createSession(
   userId: string,
-  title: string = 'New conversation'
-): Promise<ConversationSession> {
+  title: string = 'New Conversation'
+): Promise<Session> {
   const { data, error } = await supabase
-    .from('conversation_sessions')
+    .from('friday_sessions')
     .insert({
       user_id: userId,
       title,
-      messages: [],
       created_at: new Date().toISOString(),
       last_message_at: new Date().toISOString(),
+      message_count: 0,
     })
     .select()
     .single();
 
   if (error) {
-    console.error('[conversationService] Failed to create conversation:', error);
+    console.error('[conversationService] Failed to create session:', error);
     throw error;
   }
 
-  return data as ConversationSession;
+  return data as Session;
 }
 
 /**
- * Load a conversation by ID
+ * Load a session by ID
  */
-export async function loadConversation(
-  conversationId: string
-): Promise<ConversationSession | null> {
+export async function loadSession(sessionId: string): Promise<Session | null> {
   const { data, error } = await supabase
-    .from('conversation_sessions')
+    .from('friday_sessions')
     .select('*')
-    .eq('id', conversationId)
+    .eq('id', sessionId)
     .single();
 
   if (error) {
-    console.error('[conversationService] Failed to load conversation:', error);
+    console.error('[conversationService] Failed to load session:', error);
     return null;
   }
 
-  return data as ConversationSession;
+  return data as Session;
 }
 
 /**
- * Update conversation title
+ * Load all messages for a session
  */
-export async function updateConversationTitle(
-  conversationId: string,
+export async function loadSessionMessages(sessionId: string): Promise<Message[]> {
+  const { data, error } = await supabase
+    .from('friday_messages')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[conversationService] Failed to load messages:', error);
+    return [];
+  }
+
+  return (data || []).map((msg: any) => ({
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    imageBase64: msg.image_base64,
+    fileName: msg.file_name,
+    fileContent: msg.file_content,
+    created_at: msg.created_at,
+  })) as Message[];
+}
+
+/**
+ * Save a message to a session
+ */
+export async function saveMessage(
+  sessionId: string,
+  userId: string,
+  message: Message
+): Promise<void> {
+  // Insert message
+  const { error: insertError } = await supabase
+    .from('friday_messages')
+    .insert({
+      session_id: sessionId,
+      user_id: userId,
+      role: message.role,
+      content: message.content,
+      image_base64: message.imageBase64,
+      file_name: message.fileName,
+      file_content: message.fileContent,
+      created_at: message.created_at,
+    });
+
+  if (insertError) {
+    console.error('[conversationService] Failed to save message:', insertError);
+    throw insertError;
+  }
+
+  // Update session's last_message_at and message_count
+  const { error: updateError } = await supabase
+    .from('friday_sessions')
+    .update({
+      last_message_at: new Date().toISOString(),
+      message_count: supabase.rpc('increment_message_count', { session_id: sessionId }),
+    })
+    .eq('id', sessionId);
+
+  if (updateError) {
+    console.error('[conversationService] Failed to update session:', updateError);
+  }
+}
+
+/**
+ * Update session title
+ */
+export async function updateSessionTitle(
+  sessionId: string,
   title: string
 ): Promise<void> {
   const { error } = await supabase
-    .from('conversation_sessions')
+    .from('friday_sessions')
     .update({ title })
-    .eq('id', conversationId);
+    .eq('id', sessionId);
 
   if (error) {
     console.error('[conversationService] Failed to update title:', error);
@@ -92,84 +157,42 @@ export async function updateConversationTitle(
 }
 
 /**
- * Save a message to a conversation
+ * Delete a session and its messages
  */
-export async function saveMessage(
-  conversationId: string,
-  message: Message
-): Promise<void> {
-  // Get current conversation
-  const conversation = await loadConversation(conversationId);
-  if (!conversation) {
-    throw new Error('Conversation not found');
-  }
-
-  // Add message to array
-  const updatedMessages = [...(conversation.messages || []), message];
-
-  // Auto-generate title if this is the first user message
-  let title = conversation.title;
-  if (title === 'New conversation' && message.role === 'user') {
-    title = autoGenerateTitle(message.content);
-  }
-
-  // Update conversation with new messages
+export async function deleteSession(sessionId: string): Promise<void> {
   const { error } = await supabase
-    .from('conversation_sessions')
-    .update({
-      messages: updatedMessages,
-      title,
-      last_message_at: new Date().toISOString(),
-    })
-    .eq('id', conversationId);
-
-  if (error) {
-    console.error('[conversationService] Failed to save message:', error);
-    throw error;
-  }
-}
-
-/**
- * Delete a conversation
- */
-export async function deleteConversation(conversationId: string): Promise<void> {
-  const { error } = await supabase
-    .from('conversation_sessions')
+    .from('friday_sessions')
     .delete()
-    .eq('id', conversationId);
+    .eq('id', sessionId);
 
   if (error) {
-    console.error('[conversationService] Failed to delete conversation:', error);
+    console.error('[conversationService] Failed to delete session:', error);
     throw error;
   }
 }
 
 /**
- * Get all conversations for a user
+ * Get all sessions for a user
  */
-export async function getAllConversations(
-  userId: string
-): Promise<ConversationSession[]> {
+export async function getUserSessions(userId: string): Promise<Session[]> {
   const { data, error } = await supabase
-    .from('conversation_sessions')
+    .from('friday_sessions')
     .select('*')
     .eq('user_id', userId)
     .order('last_message_at', { ascending: false });
 
   if (error) {
-    console.error('[conversationService] Failed to fetch conversations:', error);
+    console.error('[conversationService] Failed to fetch sessions:', error);
     return [];
   }
 
-  return (data as ConversationSession[]) || [];
+  return (data as Session[]) || [];
 }
 
 /**
- * Group conversations by date
+ * Group sessions by date
  */
-export function groupConversationsByDate(
-  conversations: ConversationSession[]
-): GroupedConversations {
+export function groupSessionsByDate(sessions: Session[]): GroupedSessions {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today);
@@ -177,29 +200,29 @@ export function groupConversationsByDate(
   const sevenDaysAgo = new Date(today);
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-  const grouped: GroupedConversations = {
+  const grouped: GroupedSessions = {
     today: [],
     yesterday: [],
     past7days: [],
     older: [],
   };
 
-  conversations.forEach((conv) => {
-    const convDate = new Date(conv.last_message_at);
-    const convDateOnly = new Date(
-      convDate.getFullYear(),
-      convDate.getMonth(),
-      convDate.getDate()
+  sessions.forEach((session) => {
+    const sessionDate = new Date(session.last_message_at);
+    const sessionDateOnly = new Date(
+      sessionDate.getFullYear(),
+      sessionDate.getMonth(),
+      sessionDate.getDate()
     );
 
-    if (convDateOnly.getTime() === today.getTime()) {
-      grouped.today.push(conv);
-    } else if (convDateOnly.getTime() === yesterday.getTime()) {
-      grouped.yesterday.push(conv);
-    } else if (convDateOnly.getTime() >= sevenDaysAgo.getTime()) {
-      grouped.past7days.push(conv);
+    if (sessionDateOnly.getTime() === today.getTime()) {
+      grouped.today.push(session);
+    } else if (sessionDateOnly.getTime() === yesterday.getTime()) {
+      grouped.yesterday.push(session);
+    } else if (sessionDateOnly.getTime() >= sevenDaysAgo.getTime()) {
+      grouped.past7days.push(session);
     } else {
-      grouped.older.push(conv);
+      grouped.older.push(session);
     }
   });
 
@@ -207,8 +230,7 @@ export function groupConversationsByDate(
 }
 
 /**
- * Auto-generate conversation title from first message
- * Takes first 40 characters, truncates with "..."
+ * Auto-generate session title from first message
  */
 export function autoGenerateTitle(firstMessage: string): string {
   const maxLength = 40;
@@ -219,9 +241,9 @@ export function autoGenerateTitle(firstMessage: string): string {
 }
 
 /**
- * Format a date for display in conversation list
+ * Format a date for display in session list
  */
-export function formatConversationDate(dateString: string): string {
+export function formatSessionDate(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
 

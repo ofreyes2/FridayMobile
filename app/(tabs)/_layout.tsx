@@ -8,11 +8,13 @@ import { ProfileScreen } from '@/components/ProfileScreen';
 import { DiscoverScreen } from '@/components/DiscoverScreen';
 import { LibraryScreen } from '@/components/LibraryScreen';
 import {
-  getAllConversations,
-  createConversation,
-  ConversationSession,
+  getUserSessions,
+  createSession,
+  loadSessionMessages,
+  Session as DBSession,
+  groupSessionsByDate,
 } from '@/lib/conversationService';
-import type { Session } from '@supabase/supabase-js';
+import type { Session as AuthSession } from '@supabase/supabase-js';
 
 // Dynamic import of ChatScreen
 import ChatScreenComponent from '@/app/(tabs)/chat';
@@ -24,71 +26,80 @@ export default function TabLayout() {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [conversations, setConversations] = useState<ConversationSession[]>([]);
-  const [session, setSession] = useState<Session | null>(null);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<DBSession[]>([]);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState('llama3.3:70b');
+  const [currentSessionMessages, setCurrentSessionMessages] = useState<any[]>([]);
 
-  // Load session
+  // Load auth session
   useEffect(() => {
-    const loadSession = async () => {
+    const loadAuthSession = async () => {
       const { data: { session: sess } } = await supabase.auth.getSession();
-      setSession(sess);
+      setAuthSession(sess);
       if (sess) {
-        loadConversations(sess.user.id);
+        loadUserSessions(sess.user.id);
       }
     };
-    loadSession();
+    loadAuthSession();
   }, []);
 
-  // Load conversations
-  const loadConversations = useCallback(async (userId: string) => {
+  // Load user sessions
+  const loadUserSessions = useCallback(async (userId: string) => {
     try {
-      const convs = await getAllConversations(userId);
-      setConversations(convs);
+      const userSessions = await getUserSessions(userId);
+      setSessions(userSessions);
     } catch (err) {
-      console.error('[TabLayout] Failed to load conversations:', err);
+      console.error('[TabLayout] Failed to load sessions:', err);
     }
   }, []);
 
   // Handle tab press
   const handleTabPress = useCallback(async (tab: TabType) => {
     if (tab === 'new') {
-      // Create new conversation
-      if (session?.user.id) {
+      // Create new session
+      if (authSession?.user.id) {
         try {
-          const newConv = await createConversation(session.user.id, 'New conversation');
-          setCurrentConversationId(newConv.id);
-          setConversations((prev) => [newConv, ...prev]);
+          const newSession = await createSession(authSession.user.id, 'New Conversation');
+          setCurrentSessionId(newSession.id);
+          setCurrentSessionMessages([]);
+          setSessions((prev) => [newSession, ...prev]);
           setActiveTab('home');
         } catch (err) {
-          console.error('[TabLayout] Failed to create conversation:', err);
+          console.error('[TabLayout] Failed to create session:', err);
         }
       }
     } else {
       setActiveTab(tab);
     }
-  }, [session?.user.id]);
+  }, [authSession?.user.id]);
 
-  // Handle conversation selection
-  const handleSelectConversation = useCallback((id: string) => {
-    setCurrentConversationId(id);
-    setActiveTab('home');
+  // Handle session selection
+  const handleSelectSession = useCallback(async (id: string) => {
+    try {
+      const messages = await loadSessionMessages(id);
+      setCurrentSessionId(id);
+      setCurrentSessionMessages(messages);
+      setActiveTab('home');
+    } catch (err) {
+      console.error('[TabLayout] Failed to load session messages:', err);
+    }
   }, []);
 
-  // Handle new conversation from drawer
-  const handleNewConversation = useCallback(async () => {
-    if (session?.user.id) {
+  // Handle new session from drawer
+  const handleNewSession = useCallback(async () => {
+    if (authSession?.user.id) {
       try {
-        const newConv = await createConversation(session.user.id, 'New conversation');
-        setCurrentConversationId(newConv.id);
-        setConversations((prev) => [newConv, ...prev]);
+        const newSession = await createSession(authSession.user.id, 'New Conversation');
+        setCurrentSessionId(newSession.id);
+        setCurrentSessionMessages([]);
+        setSessions((prev) => [newSession, ...prev]);
         setActiveTab('home');
       } catch (err) {
-        console.error('[TabLayout] Failed to create conversation:', err);
+        console.error('[TabLayout] Failed to create session:', err);
       }
     }
-  }, [session?.user.id]);
+  }, [authSession?.user.id]);
 
   return (
     <View style={styles.container}>
@@ -112,21 +123,21 @@ export default function TabLayout() {
       <NavigationDrawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        conversations={conversations}
-        onSelectConversation={handleSelectConversation}
-        onNewConversation={handleNewConversation}
+        sessions={sessions}
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
         onProfilePress={() => {
           setIsDrawerOpen(false);
           setShowProfileModal(true);
         }}
-        session={session}
+        session={authSession}
       />
 
       {/* Profile Modal */}
       <ProfileScreen
         isVisible={showProfileModal}
         onClose={() => setShowProfileModal(false)}
-        session={session}
+        session={authSession}
         currentModel={selectedModel}
       />
     </View>

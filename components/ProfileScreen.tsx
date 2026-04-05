@@ -8,14 +8,14 @@ import {
   StyleSheet,
   Alert,
 } from 'react-native';
-import type { Session } from '@supabase/supabase-js';
+import type { Session as AuthSession } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'expo-router';
 
 interface ProfileScreenProps {
   isVisible: boolean;
   onClose: () => void;
-  session: Session | null;
+  session: AuthSession | null;
   currentModel: string;
 }
 

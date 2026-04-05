@@ -9,25 +9,25 @@ import {
   Animated,
   GestureResponderEvent,
 } from 'react-native';
-import { ConversationSession, groupConversationsByDate, GroupedConversations } from '@/lib/conversationService';
-import type { Session } from '@supabase/supabase-js';
+import { Session as DBSession, groupSessionsByDate, GroupedSessions } from '@/lib/conversationService';
+import type { Session as AuthSession } from '@supabase/supabase-js';
 
 interface NavigationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  conversations: ConversationSession[];
-  onSelectConversation: (id: string) => void;
-  onNewConversation: () => void;
+  sessions: DBSession[];
+  onSelectSession: (id: string) => void;
+  onNewSession: () => void;
   onProfilePress: () => void;
-  session: Session | null;
+  session: AuthSession | null;
 }
 
 export function NavigationDrawer({
   isOpen,
   onClose,
-  conversations,
-  onSelectConversation,
-  onNewConversation,
+  sessions,
+  onSelectSession,
+  onNewSession,
   onProfilePress,
   session,
 }: NavigationDrawerProps) {
@@ -49,7 +49,7 @@ export function NavigationDrawer({
     }
   }, [isOpen, slideAnim]);
 
-  const grouped = groupConversationsByDate(conversations);
+  const grouped = groupSessionsByDate(sessions);
   const userName = session?.user?.user_metadata?.name ||
                    session?.user?.email?.split('@')[0] ||
                    'User';
@@ -60,27 +60,30 @@ export function NavigationDrawer({
     onClose();
   };
 
-  const renderConversationSection = (
+  const renderSessionSection = (
     title: string,
-    convs: ConversationSession[]
+    sessionsData: DBSession[]
   ) => {
-    if (convs.length === 0) return null;
+    if (sessionsData.length === 0) return null;
 
     return (
       <View key={title} style={styles.section}>
         <Text style={styles.sectionTitle}>{title}</Text>
-        {convs.map((conv) => (
+        {sessionsData.map((sess) => (
           <TouchableOpacity
-            key={conv.id}
-            style={styles.conversationItem}
+            key={sess.id}
+            style={styles.sessionItem}
             onPress={() => {
-              onSelectConversation(conv.id);
+              onSelectSession(sess.id);
               onClose();
             }}
             activeOpacity={0.7}
           >
-            <Text style={styles.conversationTitle} numberOfLines={1}>
-              {conv.title}
+            <Text style={styles.sessionTitle} numberOfLines={1}>
+              {sess.title}
+            </Text>
+            <Text style={styles.sessionMeta}>
+              {sess.message_count} message{sess.message_count !== 1 ? 's' : ''}
             </Text>
           </TouchableOpacity>
         ))}
@@ -117,7 +120,7 @@ export function NavigationDrawer({
           <TouchableOpacity
             style={styles.newButton}
             onPress={() => {
-              onNewConversation();
+              onNewSession();
               onClose();
             }}
             activeOpacity={0.7}
@@ -126,17 +129,17 @@ export function NavigationDrawer({
           </TouchableOpacity>
         </View>
 
-        {/* Conversations List */}
-        <ScrollView style={styles.conversationsList} showsVerticalScrollIndicator={false}>
-          {renderConversationSection('Today', grouped.today)}
-          {renderConversationSection('Yesterday', grouped.yesterday)}
-          {renderConversationSection('Past 7 days', grouped.past7days)}
-          {renderConversationSection('Older', grouped.older)}
+        {/* Sessions List */}
+        <ScrollView style={styles.sessionsList} showsVerticalScrollIndicator={false}>
+          {renderSessionSection('Today', grouped.today)}
+          {renderSessionSection('Yesterday', grouped.yesterday)}
+          {renderSessionSection('Past 7 days', grouped.past7days)}
+          {renderSessionSection('Older', grouped.older)}
 
-          {conversations.length === 0 && (
+          {sessions.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateText}>No conversations yet</Text>
-              <Text style={styles.emptyStateHint}>Start a new conversation to get began</Text>
+              <Text style={styles.emptyStateHint}>Start a new conversation to get started</Text>
             </View>
           )}
         </ScrollView>
@@ -210,7 +213,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0A0A0F',
   },
-  conversationsList: {
+  sessionsList: {
     flex: 1,
     paddingHorizontal: 8,
     paddingVertical: 12,
@@ -227,17 +230,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     letterSpacing: 0.5,
   },
-  conversationItem: {
+  sessionItem: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 4,
     borderRadius: 8,
     backgroundColor: '#1A1A22',
   },
-  conversationTitle: {
+  sessionTitle: {
     fontSize: 13,
     color: '#FFFFFF',
     fontWeight: '500',
+  },
+  sessionMeta: {
+    fontSize: 11,
+    color: '#5A5A7A',
+    marginTop: 2,
   },
   emptyState: {
     alignItems: 'center',
