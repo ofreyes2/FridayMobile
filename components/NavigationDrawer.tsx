@@ -9,6 +9,7 @@ import {
   Animated,
   GestureResponderEvent,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Session as DBSession, groupSessionsByDate, GroupedSessions } from '@/lib/conversationService';
 import type { Session as AuthSession } from '@supabase/supabase-js';
 
@@ -31,6 +32,7 @@ export function NavigationDrawer({
   onProfilePress,
   session,
 }: NavigationDrawerProps) {
+  const insets = useSafeAreaInsets();
   const slideAnim = React.useRef(new Animated.Value(-300)).current;
 
   useEffect(() => {
@@ -111,6 +113,7 @@ export function NavigationDrawer({
           styles.drawer,
           {
             transform: [{ translateX: slideAnim }],
+            paddingTop: insets.top + 8,
           },
         ]}
       >

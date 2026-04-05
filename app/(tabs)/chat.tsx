@@ -15,7 +15,7 @@ import {
   FlatList,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -65,6 +65,7 @@ interface Message {
 const DEFAULT_MODEL = 'llama3.3:70b';
 
 export default function ChatScreen() {
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
@@ -882,7 +883,7 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={styles.minimalHeader}>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top + 8 }]}>
           <Text style={styles.conversationTitle}>New conversation ↓</Text>
         </View>
 
