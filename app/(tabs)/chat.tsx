@@ -889,7 +889,7 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top + 4 }]}>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top + 2 }]}>
           <Text style={styles.conversationTitle}>New conversation ↓</Text>
         </View>
 
@@ -1217,7 +1217,7 @@ const styles = StyleSheet.create({
   },
   minimalHeader: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: 6,
     borderBottomColor: Colors.border,
     borderBottomWidth: 1,
     backgroundColor: Colors.surface,
@@ -1303,7 +1303,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messagesContent: {
-    paddingVertical: 16,
+    flexGrow: 1,
+    justifyContent: 'center',
   },
   emptyStateContainer: {
     flex: 1,
