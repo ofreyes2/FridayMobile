@@ -731,10 +731,11 @@ export default function ChatScreen() {
       }
 
       // Send message directly to Friday (which talks to Ollama)
+      // Pass conversation history for context
       // If image is attached, pass it to the Friday hook
       const response = attachedImage
-        ? await friday.sendMessageWithImage(messageContent, attachedImage.base64)
-        : await friday.sendMessage(messageContent);
+        ? await friday.sendMessageWithImage(messageContent, attachedImage.base64, messages)
+        : await friday.sendMessage(messageContent, messages);
       const duration = Date.now() - startTime;
 
       console.log('[ChatScreen] Got response from Friday:', response);
@@ -908,7 +909,7 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top - 8 }]}>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top - 12 }]}>
           <TouchableOpacity
             onPress={() => setShowHistoryModal(true)}
             style={{ flexDirection: 'row', alignItems: 'center' }}

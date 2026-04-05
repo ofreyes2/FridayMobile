@@ -35,8 +35,8 @@ export interface UseFridayResult {
   interactionCount: number
 
   // Actions
-  sendMessage: (text: string) => Promise<string>
-  sendMessageWithImage: (text: string, imageBase64: string) => Promise<string>
+  sendMessage: (text: string, conversationMessages?: any[]) => Promise<string>
+  sendMessageWithImage: (text: string, imageBase64: string, conversationMessages?: any[]) => Promise<string>
   getSystemPrompt: () => string
   updatePersonality: (personality: Partial<FridayPersonality>) => Promise<void>
   clearMemories: () => Promise<void>
@@ -188,7 +188,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
   }, [options.ollamaEndpoint])
 
   const sendMessage = useCallback(
-    async (userInput: string): Promise<string> => {
+    async (userInput: string, conversationMessages: any[] = []): Promise<string> => {
       if (!memoryRef.current || !personality) {
         throw new Error('Friday not initialized')
       }
@@ -236,12 +236,20 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
 
         // Call Ollama API with streaming enabled via XMLHttpRequest (React Native compatible)
         const url = `${options.ollamaEndpoint}/api/chat`
+
+        // Build messages array with full conversation history
+        const messages = [
+          { role: "system", content: systemPrompt },
+          ...conversationMessages.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          { role: "user", content: userInput },
+        ]
+
         const requestBody = {
           model: options.ollamaModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userInput },
-          ],
+          messages,
           stream: true,
         }
 
@@ -395,7 +403,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
    * Send message with image attachment to Ollama
    */
   const sendMessageWithImage = useCallback(
-    async (userInput: string, imageBase64: string): Promise<string> => {
+    async (userInput: string, imageBase64: string, conversationMessages: any[] = []): Promise<string> => {
       if (!memoryRef.current || !personality) {
         throw new Error('Friday not initialized')
       }
@@ -443,16 +451,24 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
 
         // Call Ollama API with image included via XMLHttpRequest (React Native compatible)
         const url = `${options.ollamaEndpoint}/api/chat`
+
+        // Build messages array with full conversation history and image
+        const messages = [
+          { role: "system", content: systemPrompt },
+          ...conversationMessages.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          {
+            role: "user",
+            content: userInput,
+            images: [imageBase64] // Include image as base64
+          },
+        ]
+
         const requestBody = {
           model: options.ollamaModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: userInput,
-              images: [imageBase64] // Include image as base64
-            },
-          ],
+          messages,
           stream: true,
         }
 
