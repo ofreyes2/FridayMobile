@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface ConversationRecord {
   id: string;
@@ -30,7 +32,7 @@ export const saveConversationRecord = async (
 
     const recordWithId: ConversationRecord = {
       ...record,
-      id: `record_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: uuidv4(),
     };
 
     const sessionIndex = sessions.findIndex((s) => s.id === sessionId);
@@ -57,7 +59,7 @@ export const saveConversationRecord = async (
  */
 export const createSession = async (): Promise<ConversationSession> => {
   const session: ConversationSession = {
-    id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: uuidv4(),
     startedAt: Date.now(),
     records: [],
   };

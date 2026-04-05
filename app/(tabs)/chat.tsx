@@ -31,7 +31,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { speakWithFriday } from '@/services/voice';
 import { recordAndTranscribe } from '@/services/voiceInput';
 import {
-  createSession,
   saveConversationRecord,
   getAllSessions,
   resumeSession,
@@ -41,6 +40,7 @@ import { fetchOllamaModels } from '@/services/ollamaModels';
 import { useFriday } from '@/hooks/useFriday';
 import { supabase } from '@/lib/supabase';
 import {
+  createSession as createSupabaseSession,
   saveMessage,
   updateSessionTitle,
   autoGenerateTitle,
@@ -425,7 +425,11 @@ export default function ChatScreen() {
 
   const initializeSession = async () => {
     try {
-      const newSession = await createSession();
+      if (!authSession?.user.id) {
+        console.error('No authenticated user for session creation');
+        return;
+      }
+      const newSession = await createSupabaseSession(authSession.user.id, 'New Conversation');
       setCurrentSessionId(newSession.id);
     } catch (error) {
       console.error('Error initializing session:', error);
@@ -858,8 +862,10 @@ export default function ChatScreen() {
       );
       setShowHistoryModal(false);
       // Create a new session for continuing the conversation
-      const newSession = await createSession();
-      setCurrentSessionId(newSession.id);
+      if (authSession?.user.id) {
+        const newSession = await createSupabaseSession(authSession.user.id, 'New Conversation');
+        setCurrentSessionId(newSession.id);
+      }
     } catch (error) {
       Alert.alert('Error', 'Failed to load session');
       console.error('Error resuming session:', error);
