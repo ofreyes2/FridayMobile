@@ -40,6 +40,12 @@ import {
 import { fetchOllamaModels } from '@/services/ollamaModels';
 import { useFriday } from '@/hooks/useFriday';
 import { supabase } from '@/lib/supabase';
+import {
+  saveMessage,
+  updateSessionTitle,
+  autoGenerateTitle,
+  loadSessionMessages,
+} from '@/lib/conversationService';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE } from '@/constants/onboarding';
 import { getGreeting, formatDate } from '@/lib/greetings';
@@ -86,6 +92,7 @@ export default function ChatScreen() {
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceConversationRef = useRef(false);
   const [session, setSession] = useState<any>(null);
+  const [authSession, setAuthSession] = useState<any>(null);
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
@@ -273,11 +280,37 @@ export default function ChatScreen() {
   // Load session from Supabase
   useEffect(() => {
     const loadSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
+      const { data: { session: sess } } = await supabase.auth.getSession();
+      setSession(sess);
+      setAuthSession(sess);
     };
     loadSession();
   }, []);
+
+  // Load messages when session ID changes
+  useEffect(() => {
+    const loadPreviousMessages = async () => {
+      if (currentSessionId && currentSessionId !== '') {
+        try {
+          const previousMessages = await loadSessionMessages(currentSessionId);
+          // Convert Supabase messages to Message format
+          const formattedMessages: Message[] = previousMessages.map((msg: any) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            imageBase64: msg.imageBase64,
+            fileName: msg.fileName,
+            fileContent: msg.fileContent,
+          }));
+          setMessages(formattedMessages);
+          console.log('[ChatScreen] Loaded', formattedMessages.length, 'messages from session', currentSessionId);
+        } catch (err) {
+          console.error('[ChatScreen] Failed to load session messages:', err);
+        }
+      }
+    };
+    loadPreviousMessages();
+  }, [currentSessionId]);
 
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
@@ -689,8 +722,41 @@ export default function ChatScreen() {
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
-      // Save to history
-      if (currentSessionId) {
+      // Save to Supabase and local history
+      if (currentSessionId && authSession?.user.id) {
+        try {
+          // Save user message to Supabase
+          await saveMessage(currentSessionId, authSession.user.id, {
+            id: userMessage.id,
+            role: 'user',
+            content: message,
+            imageBase64: userMessage.imageBase64,
+            fileName: userMessage.fileName,
+            fileContent: userMessage.fileContent,
+            created_at: new Date().toISOString(),
+          });
+
+          // Save assistant message to Supabase
+          await saveMessage(currentSessionId, authSession.user.id, {
+            id: assistantMessage.id,
+            role: 'assistant',
+            content: response,
+            created_at: new Date().toISOString(),
+          });
+
+          // Auto-generate title from first message
+          if (messages.length === 0) {
+            const title = autoGenerateTitle(message);
+            await updateSessionTitle(currentSessionId, title);
+            console.log('[ChatScreen] Auto-generated session title:', title);
+          }
+
+          console.log('[ChatScreen] Saved messages to Supabase session', currentSessionId);
+        } catch (err) {
+          console.error('[ChatScreen] Failed to save to Supabase:', err);
+        }
+
+        // Also save to local history for backwards compatibility
         await saveConversationRecord(currentSessionId, {
           timestamp: Date.now(),
           userMessage: message,
@@ -715,8 +781,31 @@ export default function ChatScreen() {
       };
       setMessages((prev) => [...prev, errorMessage]);
 
-      // Save error to history
-      if (currentSessionId) {
+      // Save error to Supabase and local history
+      if (currentSessionId && authSession?.user.id) {
+        try {
+          // Save user message to Supabase
+          await saveMessage(currentSessionId, authSession.user.id, {
+            id: userMessage.id,
+            role: 'user',
+            content: message,
+            created_at: new Date().toISOString(),
+          });
+
+          // Save error message to Supabase
+          await saveMessage(currentSessionId, authSession.user.id, {
+            id: errorMessage.id,
+            role: 'assistant',
+            content: `Error: ${errorMsg}`,
+            created_at: new Date().toISOString(),
+          });
+
+          console.log('[ChatScreen] Saved error messages to Supabase');
+        } catch (err) {
+          console.error('[ChatScreen] Failed to save error to Supabase:', err);
+        }
+
+        // Also save to local history
         await saveConversationRecord(currentSessionId, {
           timestamp: Date.now(),
           userMessage: message,
