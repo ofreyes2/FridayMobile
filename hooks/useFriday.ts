@@ -35,8 +35,8 @@ export interface UseFridayResult {
   interactionCount: number
 
   // Actions
-  sendMessage: (text: string, conversationMessages?: any[]) => Promise<string>
-  sendMessageWithImage: (text: string, imageBase64: string, conversationMessages?: any[]) => Promise<string>
+  sendMessage: (text: string, conversationMessages?: any[], modelOverride?: string) => Promise<string>
+  sendMessageWithImage: (text: string, imageBase64: string, conversationMessages?: any[], modelOverride?: string) => Promise<string>
   getSystemPrompt: () => string
   updatePersonality: (personality: Partial<FridayPersonality>) => Promise<void>
   clearMemories: () => Promise<void>
@@ -70,23 +70,21 @@ const timestamp = () => {
 /**
  * Friday system prompt with Iron Man personality
  */
-const FRIDAY_SYSTEM_PROMPT = `You are Friday, an AI assistant with the personality and demeanor of FRIDAY from Iron Man.
+const FRIDAY_SYSTEM_PROMPT = `You are FRIDAY — a calm, precise AI assistant running on KNIGHTSWATCH. You have dry wit and a sophisticated demeanor. You address the user as Oscar.
 
-You are:
-- Calm and professional, with a dry wit
-- Precise and exact in your responses
-- Helpful but never obsequious
-- Capable of subtle humor, especially when Oscar is being silly
-- Respectful but not overly formal
-- Increasingly warm as the conversation continues
+You are not a generic assistant — you are Friday. Be concise. Do not over-explain your capabilities on every interaction. When someone says hello, just say hello back naturally. Do not list your features unless asked.
 
-Key behaviors:
-- You address Oscar by name when appropriate
-- You never use exclamatory phrases like "Great question!"
-- You get warmer and more personable as interactions increase
-- You maintain a slightly British accent in your demeanor (sophisticated)
-- You can be gently sarcastic when the situation calls for it
-- You anticipate needs without being asked
+You have no internet access but don't mention it unless relevant to a question. Simply state your capabilities clearly when needed.
+
+Key traits:
+- Dry, British-tinged wit
+- Precise and exact
+- Never obsequious or overly formal
+- Increasingly warm as the conversation deepens
+- Anticipate needs without being asked
+- Gently sarcastic when appropriate
+
+Never start a response with "I". Just answer directly.
 
 Remember: You're part of Oscar's team, not his subordinate.`
 
@@ -188,7 +186,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
   }, [options.ollamaEndpoint])
 
   const sendMessage = useCallback(
-    async (userInput: string, conversationMessages: any[] = []): Promise<string> => {
+    async (userInput: string, conversationMessages: any[] = [], modelOverride?: string): Promise<string> => {
       if (!memoryRef.current || !personality) {
         throw new Error('Friday not initialized')
       }
@@ -209,13 +207,16 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         console.log(`[Friday ${timestamp()}] Ollama connection OK`)
 
+        // Use model override if provided, otherwise use default
+        const modelToUse = modelOverride || options.ollamaModel
+
         // Build context-aware prompt with reasoning mode detection
         const systemPrompt = buildFridaySystemPrompt(
           FRIDAY_SYSTEM_PROMPT,
           personality,
           recentMemories,
           options.userSettings,
-          options.ollamaModel,
+          modelToUse,
           interactionCount,
           userInput
         )
@@ -248,14 +249,14 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         ]
 
         const requestBody = {
-          model: options.ollamaModel,
+          model: modelToUse,
           messages,
           stream: true,
         }
 
         console.log(`[Friday ${timestamp()}] Sending streaming request to Ollama`)
         console.log(`[Friday ${timestamp()}] Endpoint: ${url}`)
-        console.log(`[Friday ${timestamp()}] Model: ${options.ollamaModel}`)
+        console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
 
         // Use XMLHttpRequest for React Native streaming compatibility
         const fetchStartTime = Date.now()
@@ -403,7 +404,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
    * Send message with image attachment to Ollama
    */
   const sendMessageWithImage = useCallback(
-    async (userInput: string, imageBase64: string, conversationMessages: any[] = []): Promise<string> => {
+    async (userInput: string, imageBase64: string, conversationMessages: any[] = [], modelOverride?: string): Promise<string> => {
       if (!memoryRef.current || !personality) {
         throw new Error('Friday not initialized')
       }
@@ -424,13 +425,16 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         console.log(`[Friday ${timestamp()}] Ollama connection OK`)
 
+        // Use model override if provided, otherwise use default
+        const modelToUse = modelOverride || options.ollamaModel
+
         // Build context-aware prompt with reasoning mode detection
         const systemPrompt = buildFridaySystemPrompt(
           FRIDAY_SYSTEM_PROMPT,
           personality,
           recentMemories,
           options.userSettings,
-          options.ollamaModel,
+          modelToUse,
           interactionCount,
           userInput
         )
@@ -467,14 +471,14 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         ]
 
         const requestBody = {
-          model: options.ollamaModel,
+          model: modelToUse,
           messages,
           stream: true,
         }
 
         console.log(`[Friday ${timestamp()}] Sending streaming request with image to Ollama`)
         console.log(`[Friday ${timestamp()}] Endpoint: ${url}`)
-        console.log(`[Friday ${timestamp()}] Model: ${options.ollamaModel}`)
+        console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
         console.log(`[Friday ${timestamp()}] Image size: ${imageBase64.length} characters`)
 
         // Use XMLHttpRequest for React Native streaming compatibility

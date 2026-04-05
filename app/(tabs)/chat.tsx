@@ -28,6 +28,23 @@ try {
   console.log('[ChatScreen] Voice native module not available - using Expo Go');
 }
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Guard react-native-permissions like Voice - not available in Expo Go
+let check: any = null;
+let request: any = null;
+let PERMISSIONS: any = null;
+let RESULTS: any = null;
+
+try {
+  const perms = require('react-native-permissions');
+  check = perms.check;
+  request = perms.request;
+  PERMISSIONS = perms.PERMISSIONS;
+  RESULTS = perms.RESULTS;
+} catch (e) {
+  console.log('[ChatScreen] react-native-permissions not available in Expo Go');
+}
+
 import { speakWithFriday } from '@/services/voice';
 import { recordAndTranscribe } from '@/services/voiceInput';
 import {
@@ -37,6 +54,7 @@ import {
   ConversationSession,
 } from '@/services/fridayHistory';
 import { fetchOllamaModels, getOllamaEndpoint } from '@/services/ollamaModels';
+import { generateImage } from '@/services/comfyui';
 import { useFriday } from '@/hooks/useFriday';
 import { supabase } from '@/lib/supabase';
 import {
@@ -60,13 +78,34 @@ interface Message {
   imageBase64?: string;
   fileName?: string;
   fileContent?: string;
+  timestamp?: number; // milliseconds since epoch
 }
 
 const DEFAULT_MODEL = 'llama3.3:70b';
 
-export default function ChatScreen() {
+interface ChatScreenProps {
+  sessionId?: string;
+  initialMessages?: any[];
+}
+
+export default function ChatScreen({ sessionId, initialMessages }: ChatScreenProps) {
   const insets = useSafeAreaInsets();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(initialMessages ? initialMessages.map((msg: any) => {
+    // Convert created_at to timestamp if present
+    let timestamp: number | undefined;
+    if (msg.created_at) {
+      timestamp = new Date(msg.created_at).getTime();
+    }
+    return {
+      id: msg.id,
+      role: msg.role,
+      content: msg.content,
+      imageBase64: msg.imageBase64,
+      fileName: msg.fileName,
+      fileContent: msg.fileContent,
+      timestamp,
+    };
+  }) : []);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [loading, setLoading] = useState(false);
@@ -96,6 +135,11 @@ export default function ChatScreen() {
   const [authSession, setAuthSession] = useState<any>(null);
   const [ollamaEndpoint, setOllamaEndpoint] = useState<string>('http://100.112.253.127:11434');
   const ollamaEndpointRef = useRef<string>('http://100.112.253.127:11434');
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  const [autoSwitchIndicator, setAutoSwitchIndicator] = useState<string>('');
+  const [showImageGenModal, setShowImageGenModal] = useState(false);
+  const [imageGenPrompt, setImageGenPrompt] = useState('');
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
@@ -145,10 +189,13 @@ export default function ChatScreen() {
     setAvailableModels(models);
     if (models.length > 0) {
       console.log('[ChatScreen] Found', models.length, 'models');
-      // Set first model as default if it exists
-      const firstModelName = models[0]?.model || DEFAULT_MODEL;
-      setSelectedModel(firstModelName);
-      await AsyncStorage.setItem('selectedModel', firstModelName);
+      // Only set default if no preference saved yet
+      const savedModel = await AsyncStorage.getItem('selectedModel');
+      if (!savedModel) {
+        await AsyncStorage.setItem('selectedModel', DEFAULT_MODEL);
+        setSelectedModel(DEFAULT_MODEL);
+        console.log('[ChatScreen] Set default model to', DEFAULT_MODEL);
+      }
     } else {
       console.log('[ChatScreen] No models found, using default');
     }
@@ -291,30 +338,48 @@ export default function ChatScreen() {
     loadSession();
   }, []);
 
-  // Load messages when session ID changes
+  // Load messages when session ID changes (from prop or internal state)
   useEffect(() => {
     const loadPreviousMessages = async () => {
-      if (currentSessionId && currentSessionId !== '') {
+      // Use prop sessionId first, fall back to internal currentSessionId
+      const idToLoad = sessionId || currentSessionId;
+      console.log('[ChatScreen] Loading messages for session:', idToLoad, 'prop sessionId:', sessionId, 'currentSessionId:', currentSessionId);
+
+      if (idToLoad && idToLoad !== '') {
         try {
-          const previousMessages = await loadSessionMessages(currentSessionId);
+          const previousMessages = await loadSessionMessages(idToLoad);
+          console.log('[ChatScreen] Fetched messages from Supabase:', previousMessages.length);
+
           // Convert Supabase messages to Message format
-          const formattedMessages: Message[] = previousMessages.map((msg: any) => ({
-            id: msg.id,
-            role: msg.role,
-            content: msg.content,
-            imageBase64: msg.imageBase64,
-            fileName: msg.fileName,
-            fileContent: msg.fileContent,
-          }));
+          const formattedMessages: Message[] = previousMessages.map((msg: any) => {
+            // Convert created_at timestamp if present
+            let timestamp: number | undefined;
+            if (msg.created_at) {
+              timestamp = new Date(msg.created_at).getTime();
+            }
+
+            return {
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              imageBase64: msg.imageBase64,
+              fileName: msg.fileName,
+              fileContent: msg.fileContent,
+              timestamp,
+            };
+          });
+
           setMessages(formattedMessages);
-          console.log('[ChatScreen] Loaded', formattedMessages.length, 'messages from session', currentSessionId);
+          // Also update internal state
+          setCurrentSessionId(idToLoad);
+          console.log('[ChatScreen] Loaded', formattedMessages.length, 'messages from session', idToLoad);
         } catch (err) {
           console.error('[ChatScreen] Failed to load session messages:', err);
         }
       }
     };
     loadPreviousMessages();
-  }, [currentSessionId]);
+  }, [sessionId]);
 
   // Load settings, create session, check server, and fetch models on mount
   useEffect(() => {
@@ -442,6 +507,15 @@ export default function ChatScreen() {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
 
+  // Update current time every minute for the header
+  useEffect(() => {
+    setCurrentTime(new Date());
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
+
   const initializeSession = async () => {
     try {
       if (!authSession?.user.id) {
@@ -514,35 +588,105 @@ export default function ChatScreen() {
 
     // Toggle voice conversation mode
     if (isVoiceConversation) {
-      // Exit voice conversation mode
+      // Exit voice conversation mode - stop immediately
+      try {
+        console.log('[ChatScreen] Stopping voice recognition...');
+        await Voice.stop();
+      } catch (error) {
+        console.error('[ChatScreen] Error stopping voice:', error);
+      }
+
+      // Reset all voice state
       setIsVoiceConversation(false);
+      setIsVoiceListening(false);
       setVoiceConversationStatus(null);
       voiceConversationRef.current = false;
       setVoiceTranscript('');
       setInput('');
-      if (isVoiceListening) {
-        try {
-          await Voice.stop();
-          console.log('[ChatScreen] Exited voice conversation mode');
-        } catch (error) {
-          console.error('[ChatScreen] Error stopping voice:', error);
-        }
+
+      // Clear silence timeout
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
       }
+
+      console.log('[ChatScreen] Exited voice conversation mode');
     } else {
-      // Enter voice conversation mode
+      // Enter voice conversation mode - request permissions first (if available)
       try {
+        // Check if permissions module is available (not in Expo Go)
+        if (!request) {
+          console.log('[ChatScreen] Permissions not available in Expo Go, skipping permission checks');
+          setIsVoiceConversation(true);
+          voiceConversationRef.current = true;
+          setVoiceTranscript('');
+          setInput('');
+          setVoiceConversationStatus('listening');
+
+          try {
+            await Voice.start('en-US');
+            console.log('[ChatScreen] Entered voice conversation mode');
+          } catch (voiceError) {
+            console.error('[ChatScreen] Voice start error:', voiceError);
+            const errorMsg = voiceError instanceof Error ? voiceError.message : String(voiceError);
+            Alert.alert('Voice Error', errorMsg || 'Could not start voice recognition');
+
+            setIsVoiceConversation(false);
+            voiceConversationRef.current = false;
+            setIsVoiceListening(false);
+            setVoiceConversationStatus(null);
+          }
+          return;
+        }
+
+        // Request permissions (Release build with native modules)
+        console.log('[ChatScreen] Requesting microphone and speech recognition permissions...');
+
+        const micPermission = await request(PERMISSIONS.IOS.MICROPHONE);
+        console.log('[ChatScreen] Microphone permission:', micPermission);
+
+        const speechPermission = await request(PERMISSIONS.IOS.SPEECH_RECOGNITION);
+        console.log('[ChatScreen] Speech recognition permission:', speechPermission);
+
+        // Check if both permissions were granted
+        if (
+          micPermission !== RESULTS.GRANTED ||
+          speechPermission !== RESULTS.GRANTED
+        ) {
+          console.warn('[ChatScreen] Permissions not granted. Mic:', micPermission, 'Speech:', speechPermission);
+          Alert.alert(
+            'Permission Required',
+            'Friday needs microphone and speech recognition access to use voice features.'
+          );
+          return;
+        }
+
+        console.log('[ChatScreen] Permissions granted, starting voice recognition...');
         setIsVoiceConversation(true);
         voiceConversationRef.current = true;
         setVoiceTranscript('');
         setInput('');
         setVoiceConversationStatus('listening');
-        await Voice.start('en-US');
-        console.log('[ChatScreen] Entered voice conversation mode');
+
+        try {
+          await Voice.start('en-US');
+          console.log('[ChatScreen] Entered voice conversation mode');
+        } catch (voiceError) {
+          console.error('[ChatScreen] Voice start error:', voiceError);
+          const errorMsg = voiceError instanceof Error ? voiceError.message : String(voiceError);
+          Alert.alert('Voice Error', errorMsg || 'Could not start voice recognition');
+
+          setIsVoiceConversation(false);
+          voiceConversationRef.current = false;
+          setIsVoiceListening(false);
+          setVoiceConversationStatus(null);
+        }
       } catch (error) {
-        console.error('[ChatScreen] Error starting voice conversation:', error);
+        console.error('[ChatScreen] Error in voice setup:', error);
         setIsVoiceConversation(false);
         voiceConversationRef.current = false;
-        Alert.alert('Voice Input Error', 'Could not start voice recognition');
+        setIsVoiceListening(false);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        Alert.alert('Voice Error', errorMsg);
       }
     }
   };
@@ -620,6 +764,70 @@ export default function ChatScreen() {
     }
   };
 
+  const handleGenerateImage = async () => {
+    if (!imageGenPrompt.trim()) {
+      Alert.alert('Empty Prompt', 'Please describe what you want to generate');
+      return;
+    }
+
+    setIsGeneratingImage(true);
+
+    try {
+      console.log('[ChatScreen] Starting image generation with prompt:', imageGenPrompt);
+      const base64Image = await generateImage(imageGenPrompt);
+
+      // Create a message with the generated image
+      const generatedImageMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Generated image: "${imageGenPrompt}"`,
+        imageBase64: base64Image,
+        timestamp: Date.now(),
+      };
+
+      setMessages((prev) => [...prev, generatedImageMessage]);
+
+      // Save to Supabase if in a session
+      if (currentSessionId && authSession?.user.id) {
+        try {
+          await saveMessage(currentSessionId, authSession.user.id, {
+            id: generatedImageMessage.id,
+            role: 'assistant',
+            content: generatedImageMessage.content,
+            imageBase64: base64Image,
+            created_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.error('[ChatScreen] Failed to save generated image to Supabase:', err);
+        }
+      }
+
+      // Close modal and reset
+      setShowImageGenModal(false);
+      setImageGenPrompt('');
+      console.log('[ChatScreen] Image generation complete');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[ChatScreen] Image generation failed:', errorMsg);
+
+      if (errorMsg.includes('ComfyUI not found')) {
+        Alert.alert(
+          'ComfyUI Not Found',
+          'Image generation requires home network connection.\n\nEnsure ComfyUI is running on KNIGHTSWATCH:\nComfyUI must be on the same network and running.'
+        );
+      } else if (errorMsg.includes('timeout')) {
+        Alert.alert(
+          'Generation Timeout',
+          'The image generation took too long. Please try again with a simpler prompt.'
+        );
+      } else {
+        Alert.alert('Generation Failed', errorMsg);
+      }
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
   const handlePasteFromClipboard = async () => {
     try {
       const text = await Clipboard.getStringAsync();
@@ -639,6 +847,11 @@ export default function ChatScreen() {
     }
   };
 
+  const exitVoiceMode = () => {
+    setIsVoiceConversation(false);
+    setVoiceConversationStatus(null);
+  };
+
   const handleVoiceModeToggle = () => {
     const newMode = !voiceMode;
     setVoiceMode(newMode);
@@ -656,22 +869,68 @@ export default function ChatScreen() {
     await handleSendMessage(message);
   };
 
+  // Smart model selection based on task
+  const selectBestModel = (
+    message: string,
+    hasImage: boolean,
+    availableModelsList: any[]
+  ): { model: string; autoSwitched: boolean; indicator: string } => {
+    // Vision model for images
+    if (hasImage) {
+      const visionModels = availableModelsList.filter(m => {
+        const lower = m.model.toLowerCase();
+        return lower.includes('vision') || lower.includes('llava') || lower.includes('moondream') || lower.includes('qwen-vl');
+      });
+      if (visionModels.length > 0 && !selectedModel.toLowerCase().includes('vision') && !selectedModel.toLowerCase().includes('llava')) {
+        return { model: visionModels[0].model, autoSwitched: true, indicator: 'Switching to vision model for image analysis...' };
+      }
+    }
+
+    // Coding model for code-related questions
+    if (/code|debug|function|error|bug|python|javascript|typescript|react|node|function|syntax|compile/i.test(message)) {
+      const codingModels = availableModelsList.filter(m => {
+        const lower = m.model.toLowerCase();
+        return lower.includes('coder') || lower.includes('code');
+      });
+      if (codingModels.length > 0 && selectedModel !== codingModels[0].model) {
+        return { model: codingModels[0].model, autoSwitched: true, indicator: 'Switching to coding model...' };
+      }
+    }
+
+    // Deep reasoning for complex topics
+    if (/physics|math|quantum|theorem|calculate|prove|astronomy|black hole|relativity|equation|algebra|calculus|geometry/i.test(message)) {
+      return { model: 'llama3.3:70b', autoSwitched: selectedModel !== 'llama3.3:70b', indicator: 'Switching to advanced reasoning model...' };
+    }
+
+    // Default model
+    return { model: DEFAULT_MODEL, autoSwitched: false, indicator: '' };
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
     await handleSendMessage(input);
   };
 
   const handleSendMessage = async (message: string) => {
-    // Check if image is attached and model supports vision
-    let finalModel = selectedModel;
-    if (attachedImage && !isVisionModel(selectedModel)) {
+    // Smart model selection based on message content and attachments
+    const { model: selectedBestModel, autoSwitched, indicator } = selectBestModel(
+      message,
+      !!attachedImage,
+      availableModels
+    );
+    let finalModel = selectedBestModel;
+
+    // Show auto-switch indicator
+    if (autoSwitched && indicator) {
+      setAutoSwitchIndicator(indicator);
+      setTimeout(() => setAutoSwitchIndicator(''), 2000);
+      console.log('[ChatScreen]', indicator);
+    }
+
+    // Check if image is attached but no vision model available
+    if (attachedImage && !isVisionModel(finalModel)) {
       const visionModels = findVisionModels();
-      if (visionModels.length > 0) {
-        finalModel = visionModels[0].model;
-        console.log('[ChatScreen] Switching to vision model:', finalModel);
-        setSelectedModel(finalModel);
-        await AsyncStorage.setItem('selectedModel', finalModel);
-      } else {
+      if (visionModels.length === 0) {
         // No vision model available - show instructions
         Alert.alert(
           'Vision Model Not Found',
@@ -702,6 +961,7 @@ export default function ChatScreen() {
       id: Date.now().toString(),
       role: 'user',
       content: message,
+      timestamp: Date.now(),
       ...(attachedImage && { imageBase64: attachedImage.base64 }),
       ...(attachedFile && { fileName: attachedFile.name, fileContent: attachedFile.content }),
     };
@@ -732,10 +992,10 @@ export default function ChatScreen() {
 
       // Send message directly to Friday (which talks to Ollama)
       // Pass conversation history for context
-      // If image is attached, pass it to the Friday hook
+      // If image is attached, use vision model; otherwise use selected model
       const response = attachedImage
-        ? await friday.sendMessageWithImage(messageContent, attachedImage.base64, messages)
-        : await friday.sendMessage(messageContent, messages);
+        ? await friday.sendMessageWithImage(messageContent, attachedImage.base64, messages, finalModel)
+        : await friday.sendMessage(messageContent, messages, finalModel);
       const duration = Date.now() - startTime;
 
       console.log('[ChatScreen] Got response from Friday:', response);
@@ -744,6 +1004,7 @@ export default function ChatScreen() {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: response,
+        timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -902,22 +1163,66 @@ export default function ChatScreen() {
     });
   };
 
+  // Format current date
+  const formatCurrentDate = (): string => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const day = days[currentTime.getDay()];
+    const month = months[currentTime.getMonth()];
+    const date = currentTime.getDate();
+    return `${day}, ${month} ${date}`;
+  };
+
+  // Format message timestamp as time only
+  const formatMessageTime = (timestamp?: number): string => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    return `${displayHours}:${displayMinutes} ${ampm}`;
+  };
+
+  // Check if should show timestamp above this message
+  // Show if: first message, or > 1 minute gap from previous message
+  const shouldShowTimestamp = (messageIndex: number): boolean => {
+    if (messageIndex < 0 || messageIndex >= messages.length) return false;
+    const message = messages[messageIndex];
+    if (!message.timestamp) return false;
+
+    // Always show on first message
+    if (messageIndex === 0) return true;
+
+    // Check time gap from previous message
+    const previousMessage = messages[messageIndex - 1];
+    if (!previousMessage.timestamp) return true;
+
+    // Show if > 1 minute (60000 ms) gap
+    const timeDiff = message.timestamp - previousMessage.timestamp;
+    return timeDiff > 60000;
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
       >
-        {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top - 12 }]}>
-          <TouchableOpacity
-            onPress={() => setShowHistoryModal(true)}
-            style={{ flexDirection: 'row', alignItems: 'center' }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.conversationTitle}>New conversation ↓</Text>
-          </TouchableOpacity>
+        {/* Date text at very top */}
+        <View style={{ paddingTop: insets.top - 50, alignItems: 'center' }}>
+          <Text style={{ fontSize: 12, color: '#8888AA', fontWeight: '500' }}>
+            {formatCurrentDate()}
+          </Text>
         </View>
+
+        {/* Cyan header line immediately below date */}
+        <View style={{
+          height: 2,
+          backgroundColor: '#00D4FF',
+          width: '100%'
+        }} />
 
         <ScrollView
           ref={scrollViewRef}
@@ -938,40 +1243,54 @@ export default function ChatScreen() {
               </View>
             </View>
           )}
-          {messages.map((message) => (
-            <View
-              key={message.id}
-              style={[
-                styles.messageRow,
-                message.role === 'user' ? styles.userRow : styles.assistantRow,
-              ]}
-            >
+          {messages.map((message, index) => (
+            <View key={message.id}>
+              {/* Timestamp above message if gap > 1 minute */}
+              {shouldShowTimestamp(index) && (
+                <View style={{ alignItems: 'center', marginVertical: 8 }}>
+                  <Text style={{
+                    fontSize: 12,
+                    color: '#8888AA',
+                    fontWeight: '500',
+                  }}>
+                    {formatMessageTime(message.timestamp)}
+                  </Text>
+                </View>
+              )}
+              {/* Message bubble */}
               <View
                 style={[
-                  styles.messageBubble,
-                  message.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                  styles.messageRow,
+                  message.role === 'user' ? styles.userRow : styles.assistantRow,
                 ]}
               >
-                {message.imageBase64 && (
-                  <Image
-                    source={{ uri: `data:image/jpeg;base64,${message.imageBase64}` }}
-                    style={styles.messageBubbleImage}
-                  />
-                )}
-                {message.fileName && (
-                  <View style={styles.fileAttachment}>
-                    <Text style={styles.fileIcon}>📄</Text>
-                    <Text style={styles.fileName}>{message.fileName}</Text>
-                  </View>
-                )}
-                <Text
+                <View
                   style={[
-                    styles.messageText,
-                    message.role === 'user' ? styles.userText : styles.assistantText,
+                    styles.messageBubble,
+                    message.role === 'user' ? styles.userBubble : styles.assistantBubble,
                   ]}
                 >
-                  {message.content}
-                </Text>
+                  {message.imageBase64 && (
+                    <Image
+                      source={{ uri: `data:image/jpeg;base64,${message.imageBase64}` }}
+                      style={styles.messageBubbleImage}
+                    />
+                  )}
+                  {message.fileName && (
+                    <View style={styles.fileAttachment}>
+                      <Text style={styles.fileIcon}>📄</Text>
+                      <Text style={styles.fileName}>{message.fileName}</Text>
+                    </View>
+                  )}
+                  <Text
+                    style={[
+                      styles.messageText,
+                      message.role === 'user' ? styles.userText : styles.assistantText,
+                    ]}
+                  >
+                    {message.content}
+                  </Text>
+                </View>
               </View>
             </View>
           ))}
@@ -1031,7 +1350,11 @@ export default function ChatScreen() {
 
         {/* Voice Conversation Mode Indicator */}
         {isVoiceConversation && (
-          <View style={styles.voiceConversationIndicator}>
+          <TouchableOpacity
+            style={styles.voiceConversationIndicator}
+            onPress={exitVoiceMode}
+            activeOpacity={0.7}
+          >
             <View style={styles.voiceStatusContainer}>
               {voiceConversationStatus === 'listening' && (
                 <Animated.View
@@ -1042,7 +1365,7 @@ export default function ChatScreen() {
                     }),
                   }}
                 >
-                  <Text style={styles.voiceStatusText}>🎤 Listening...</Text>
+                  <Text style={styles.voiceStatusText}>🎤 Listening... tap to stop</Text>
                 </Animated.View>
               )}
               {voiceConversationStatus === 'thinking' && (
@@ -1052,7 +1375,7 @@ export default function ChatScreen() {
                 <Text style={styles.voiceStatusText}>🔊 Speaking...</Text>
               )}
             </View>
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* Copilot-style Input Bar */}
@@ -1072,7 +1395,13 @@ export default function ChatScreen() {
               placeholder={isVoiceConversation ? "Listening..." : "Type your message..."}
               placeholderTextColor="#666"
               value={input}
-              onChangeText={setInput}
+              onChangeText={(text) => {
+                setInput(text);
+                // Exit voice mode if user starts typing
+                if (isVoiceConversation && text.trim().length > 0) {
+                  exitVoiceMode();
+                }
+              }}
               multiline
               maxLength={1000}
               editable={!loading && !isVoiceConversation}
@@ -1157,10 +1486,8 @@ export default function ChatScreen() {
               <TouchableOpacity
                 style={[styles.attachmentMenuItem, styles.attachmentMenuItemDisabled]}
                 onPress={() => {
-                  Alert.alert(
-                    'Image Generation Coming Soon',
-                    'Image generation will be available soon.\n\nThis will require Stable Diffusion installed on KNIGHTSWATCH.\n\nYou can still send images from your device for analysis.'
-                  );
+                  setShowAttachmentMenu(false);
+                  setShowImageGenModal(true);
                 }}
               >
                 <Text style={styles.attachmentMenuItemIcon}>🎨</Text>
@@ -1169,6 +1496,76 @@ export default function ChatScreen() {
                   <Text style={styles.attachmentMenuItemDesc}>Coming soon</Text>
                 </View>
               </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Image Generation Modal */}
+        <Modal
+          visible={showImageGenModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => !isGeneratingImage && setShowImageGenModal(false)}
+        >
+          <View style={styles.imageGenModalOverlay}>
+            <View style={styles.imageGenModalSheet}>
+              {/* Header */}
+              <View style={styles.imageGenHeader}>
+                <TouchableOpacity
+                  onPress={() => !isGeneratingImage && setShowImageGenModal(false)}
+                  disabled={isGeneratingImage}
+                  hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                >
+                  <Text style={[styles.imageGenCloseIcon, isGeneratingImage && { opacity: 0.5 }]}>✕</Text>
+                </TouchableOpacity>
+                <Text style={styles.imageGenTitle}>Generate Image</Text>
+                <View style={{ width: 40 }} />
+              </View>
+
+              <ScrollView style={styles.imageGenContent} showsVerticalScrollIndicator={false}>
+                {/* Description */}
+                <Text style={styles.imageGenLabel}>Describe what you want to create:</Text>
+
+                {/* Text Input */}
+                <TextInput
+                  style={styles.imageGenInput}
+                  placeholder="A beautiful sunset over mountains..."
+                  placeholderTextColor="#5A5A7A"
+                  value={imageGenPrompt}
+                  onChangeText={setImageGenPrompt}
+                  multiline
+                  editable={!isGeneratingImage}
+                  maxLength={500}
+                />
+
+                {/* Generate Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.imageGenButton,
+                    isGeneratingImage || !imageGenPrompt.trim() ? styles.imageGenButtonDisabled : {},
+                  ]}
+                  disabled={isGeneratingImage || !imageGenPrompt.trim()}
+                  onPress={handleGenerateImage}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.imageGenButtonText}>
+                    {isGeneratingImage ? '🎨 Generating...' : 'Generate Image'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Info */}
+                <View style={styles.imageGenInfo}>
+                  <Text style={styles.imageGenInfoIcon}>ℹ️</Text>
+                  <Text style={styles.imageGenInfoText}>
+                    Image generation requires ComfyUI with Flux Dev model on KNIGHTSWATCH.
+                  </Text>
+                </View>
+
+                <View style={styles.imageGenCommand}>
+                  <Text style={styles.imageGenCommandLabel}>ComfyUI must be running with Flux Dev:</Text>
+                  <Text style={styles.imageGenCommandText}>ComfyUI running on home network</Text>
+                </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -1828,5 +2225,111 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: '#00000040',
     zIndex: 5,
+  },
+  imageGenModalOverlay: {
+    flex: 1,
+    backgroundColor: '#00000040',
+    justifyContent: 'flex-end',
+  },
+  imageGenModalSheet: {
+    backgroundColor: '#12121A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '80%',
+    paddingBottom: 24,
+  },
+  imageGenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E1E2E',
+  },
+  imageGenCloseIcon: {
+    fontSize: 20,
+    color: '#5A5A7A',
+    fontWeight: '600',
+  },
+  imageGenTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  imageGenContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+  },
+  imageGenLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  imageGenInput: {
+    backgroundColor: '#1A1A22',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    color: '#8888AA',
+    fontSize: 14,
+    minHeight: 100,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1E1E2E',
+  },
+  imageGenButton: {
+    backgroundColor: '#00D4FF',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  imageGenButtonDisabled: {
+    backgroundColor: '#5A5A7A',
+    opacity: 0.5,
+  },
+  imageGenButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  imageGenInfo: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A2240',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  imageGenInfoIcon: {
+    fontSize: 16,
+  },
+  imageGenInfoText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#8888AA',
+    lineHeight: 16,
+  },
+  imageGenCommand: {
+    backgroundColor: '#0A0A0F',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderLeftWidth: 2,
+    borderLeftColor: '#00D4FF',
+  },
+  imageGenCommandLabel: {
+    fontSize: 11,
+    color: '#5A5A7A',
+    marginBottom: 4,
+  },
+  imageGenCommandText: {
+    fontSize: 12,
+    color: '#00D4FF',
+    fontFamily: 'Courier New',
+    fontWeight: '500',
   },
 });

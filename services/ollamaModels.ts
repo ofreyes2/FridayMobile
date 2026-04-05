@@ -25,43 +25,55 @@ let cachedEndpoint: string | null = null
 /**
  * Detect working Ollama endpoint by trying each one
  * Returns first endpoint that responds successfully
+ * Increased timeout to 8 seconds for Tailscale connectivity on mobile
  */
 export async function getOllamaEndpoint(): Promise<string> {
   // Return cached endpoint if already detected
   if (cachedEndpoint) {
-    console.log('[OllamaModels] Using cached endpoint:', cachedEndpoint)
+    console.log('[Endpoint] Using cached endpoint:', cachedEndpoint)
     return cachedEndpoint
   }
 
-  console.log('[OllamaModels] Detecting working Ollama endpoint...')
+  console.log('[Endpoint] Detecting working Ollama endpoint...')
+  console.log('[Endpoint] Available endpoints:', OLLAMA_ENDPOINTS)
 
   for (const endpoint of OLLAMA_ENDPOINTS) {
     try {
+      console.log('[Endpoint] Trying:', endpoint)
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 3000)
+      const timeoutId = setTimeout(() => {
+        console.log('[Endpoint] Timeout (8s) reached for:', endpoint)
+        controller.abort()
+      }, 8000) // Increased from 3000ms to 8000ms for Tailscale reliability
 
-      console.log('[OllamaModels] Trying endpoint:', endpoint)
+      const startTime = Date.now()
       const response = await fetch(`${endpoint}/api/tags`, {
         method: 'GET',
         signal: controller.signal,
       })
 
+      const duration = Date.now() - startTime
       clearTimeout(timeoutId)
+
+      console.log('[Endpoint] Response status:', response.status, 'Duration:', duration + 'ms', 'Endpoint:', endpoint)
 
       if (response.ok) {
         cachedEndpoint = endpoint
-        console.log('[OllamaModels] ✓ Found working endpoint:', endpoint)
+        console.log('[Endpoint] ✓ Found working endpoint:', endpoint)
         return endpoint
+      } else {
+        console.warn('[Endpoint] Non-200 status from', endpoint, ':', response.status)
       }
     } catch (error) {
-      console.warn('[OllamaModels] Endpoint failed:', endpoint, (error as Error).message)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.warn('[Endpoint] Error trying', endpoint, ':', errorMsg)
       continue
     }
   }
 
   // Fallback to first endpoint if none respond
   cachedEndpoint = OLLAMA_ENDPOINTS[0]
-  console.warn('[OllamaModels] No endpoints responded, defaulting to:', cachedEndpoint)
+  console.warn('[Endpoint] No endpoints responded, defaulting to:', cachedEndpoint)
   return cachedEndpoint
 }
 

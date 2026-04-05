@@ -23,11 +23,26 @@
       "bundleIdentifier": "com.ofreyes2.FridayMobile",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "This app connects to local Ollama instance for AI processing",
+        "NSMicrophoneUsageDescription": "Friday needs microphone access to listen to your voice commands and questions",
+        "NSSpeechRecognitionUsageDescription": "Friday uses speech recognition to transcribe your voice into text",
         "NSBonjourServiceTypes": [
           "_http._tcp",
           "_http._tcp"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSExceptionDomains": {
+            "100.112.253.127": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            },
+            "192.168.1.219": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": false
+            }
+          }
+        }
       },
       "splash": {
         "image": "./assets/splash.png",

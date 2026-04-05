@@ -106,7 +106,10 @@ export default function TabLayout() {
       {/* Main Content */}
       <View style={styles.content}>
         {activeTab === 'home' && (
-          <ChatScreenComponent />
+          <ChatScreenComponent
+            sessionId={currentSessionId || undefined}
+            initialMessages={currentSessionMessages}
+          />
         )}
         {activeTab === 'discover' && <DiscoverScreen />}
         {activeTab === 'library' && <LibraryScreen />}
@@ -139,6 +142,7 @@ export default function TabLayout() {
         onClose={() => setShowProfileModal(false)}
         session={authSession}
         currentModel={selectedModel}
+        onModelChange={(model) => setSelectedModel(model)}
       />
     </View>
   );
