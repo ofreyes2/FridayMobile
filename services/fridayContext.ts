@@ -28,7 +28,7 @@ const fetchProjectContextFromKnightswatch = async (): Promise<ProjectContext> =>
   try {
     // Use Promise.race with timeout to avoid hanging
     const controller = new AbortController();
-    const fetchPromise = fetch('http://100.112.253.127:8080/api/project-context', {
+    const fetchPromise = fetch('http://100.112.253.127:11434/api/project-context', {
       method: 'GET',
       signal: controller.signal,
     });
@@ -151,7 +151,7 @@ export const validateKnightswatchConnection = async (): Promise<boolean> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-    const response = await fetch('http://100.112.253.127:8080/health', {
+    const response = await fetch('http://100.112.253.127:11434/health', {
       method: 'GET',
       signal: controller.signal,
     });
