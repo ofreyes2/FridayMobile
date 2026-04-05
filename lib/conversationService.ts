@@ -125,16 +125,28 @@ export async function saveMessage(
   }
 
   // Update session's last_message_at and message_count
-  const { error: updateError } = await supabase
-    .from('friday_sessions')
-    .update({
-      last_message_at: new Date().toISOString(),
-      message_count: supabase.rpc('increment_message_count', { session_id: sessionId }),
-    })
-    .eq('id', sessionId);
+  try {
+    // Get current message count
+    const { data: session } = await supabase
+      .from('friday_sessions')
+      .select('message_count')
+      .eq('id', sessionId)
+      .single();
 
-  if (updateError) {
-    console.error('[conversationService] Failed to update session:', updateError);
+    // Update with incremented count
+    const { error: updateError } = await supabase
+      .from('friday_sessions')
+      .update({
+        last_message_at: new Date().toISOString(),
+        message_count: (session?.message_count || 0) + 1,
+      })
+      .eq('id', sessionId);
+
+    if (updateError) {
+      console.error('[conversationService] Failed to update session:', updateError);
+    }
+  } catch (error) {
+    console.error('[conversationService] Failed to increment message count:', error);
   }
 }
 
