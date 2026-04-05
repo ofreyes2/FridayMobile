@@ -895,7 +895,7 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top + 2 }]}>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top }]}>
           <Text style={styles.conversationTitle}>New conversation ↓</Text>
         </View>
 
@@ -1223,10 +1223,10 @@ const styles = StyleSheet.create({
   },
   minimalHeader: {
     paddingHorizontal: 16,
-    paddingBottom: 6,
+    paddingBottom: 2,
     borderBottomColor: Colors.border,
     borderBottomWidth: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
     alignItems: 'center',
   },
   conversationTitle: {
