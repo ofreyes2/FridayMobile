@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize } from '@/services/ollamaModels';
+import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize, getOllamaEndpoint } from '@/services/ollamaModels';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE, TIMEZONES } from '@/constants/onboarding';
 import { supabase } from '@/lib/supabase';
@@ -27,6 +27,7 @@ export default function SettingsScreen() {
   const [serverStatus, setServerStatus] = useState<'online' | 'offline'>('offline');
   const [lastChecked, setLastChecked] = useState('');
   const [lastModelsRefresh, setLastModelsRefresh] = useState('');
+  const [ollamaEndpoint, setOllamaEndpoint] = useState('http://100.112.253.127:11434');
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingName, setEditingName] = useState('');
@@ -52,7 +53,10 @@ export default function SettingsScreen() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch('http://100.112.253.127:11434/api/tags', {
+      const endpoint = await getOllamaEndpoint();
+      setOllamaEndpoint(endpoint);
+
+      const response = await fetch(`${endpoint}/api/tags`, {
         method: 'GET',
         signal: controller.signal,
       });
@@ -377,7 +381,7 @@ export default function SettingsScreen() {
             </View>
 
             <Text style={styles.urlText}>
-              http://100.112.253.127:11434
+              {ollamaEndpoint}
             </Text>
 
             {availableModels.length > 0 && (

@@ -36,7 +36,7 @@ import {
   resumeSession,
   ConversationSession,
 } from '@/services/fridayHistory';
-import { fetchOllamaModels } from '@/services/ollamaModels';
+import { fetchOllamaModels, getOllamaEndpoint } from '@/services/ollamaModels';
 import { useFriday } from '@/hooks/useFriday';
 import { supabase } from '@/lib/supabase';
 import {
@@ -94,11 +94,13 @@ export default function ChatScreen() {
   const voiceConversationRef = useRef(false);
   const [session, setSession] = useState<any>(null);
   const [authSession, setAuthSession] = useState<any>(null);
+  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>('http://100.112.253.127:11434');
+  const ollamaEndpointRef = useRef<string>('http://100.112.253.127:11434');
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
     enabled: true,
-    ollamaEndpoint: 'http://100.112.253.127:11434',
+    ollamaEndpoint,
     ollamaModel: selectedModel,
     userSettings: {
       name: userProfile.name || 'Friend',
@@ -157,7 +159,8 @@ export default function ChatScreen() {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch('http://100.112.253.127:11434/api/tags', {
+      const endpoint = ollamaEndpointRef.current;
+      const response = await fetch(`${endpoint}/api/tags`, {
         method: 'GET',
         signal: controller.signal,
       });
@@ -317,6 +320,16 @@ export default function ChatScreen() {
   useEffect(() => {
     const initializeChat = async () => {
       await loadSettings();
+
+      // Detect working Ollama endpoint (Tailscale or local network)
+      try {
+        const endpoint = await getOllamaEndpoint();
+        setOllamaEndpoint(endpoint);
+        ollamaEndpointRef.current = endpoint;
+        console.log('[ChatScreen] Using Ollama endpoint:', endpoint);
+      } catch (error) {
+        console.error('[ChatScreen] Failed to detect endpoint:', error);
+      }
 
       // Fallback: if no profile name, get it from Supabase auth
       const { data: { user } } = await supabase.auth.getUser();

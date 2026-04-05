@@ -1,6 +1,6 @@
 /**
  * Ollama Models Service
- * Fetches available models from Ollama API
+ * Fetches available models from Ollama API with fallback endpoint support
  */
 
 export interface OllamaModel {
@@ -15,17 +15,66 @@ export interface OllamaModelsResponse {
   models: OllamaModel[]
 }
 
-const OLLAMA_ENDPOINT = 'http://100.112.253.127:11434'
+const OLLAMA_ENDPOINTS = [
+  'http://100.112.253.127:11434', // Tailscale (physical devices)
+  'http://192.168.1.219:11434',    // Local network (simulator)
+]
+
+let cachedEndpoint: string | null = null
+
+/**
+ * Detect working Ollama endpoint by trying each one
+ * Returns first endpoint that responds successfully
+ */
+export async function getOllamaEndpoint(): Promise<string> {
+  // Return cached endpoint if already detected
+  if (cachedEndpoint) {
+    console.log('[OllamaModels] Using cached endpoint:', cachedEndpoint)
+    return cachedEndpoint
+  }
+
+  console.log('[OllamaModels] Detecting working Ollama endpoint...')
+
+  for (const endpoint of OLLAMA_ENDPOINTS) {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 3000)
+
+      console.log('[OllamaModels] Trying endpoint:', endpoint)
+      const response = await fetch(`${endpoint}/api/tags`, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      if (response.ok) {
+        cachedEndpoint = endpoint
+        console.log('[OllamaModels] ✓ Found working endpoint:', endpoint)
+        return endpoint
+      }
+    } catch (error) {
+      console.warn('[OllamaModels] Endpoint failed:', endpoint, (error as Error).message)
+      continue
+    }
+  }
+
+  // Fallback to first endpoint if none respond
+  cachedEndpoint = OLLAMA_ENDPOINTS[0]
+  console.warn('[OllamaModels] No endpoints responded, defaulting to:', cachedEndpoint)
+  return cachedEndpoint
+}
 
 /**
  * Fetch available models from Ollama
  */
 export async function fetchOllamaModels(): Promise<OllamaModel[]> {
   try {
+    const endpoint = await getOllamaEndpoint()
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 10000)
 
-    const response = await fetch(`${OLLAMA_ENDPOINT}/api/tags`, {
+    const response = await fetch(`${endpoint}/api/tags`, {
       method: 'GET',
       signal: controller.signal,
     })
