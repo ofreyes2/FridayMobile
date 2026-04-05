@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,11 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
+  PanResponder,
+  Animated,
+  GestureResponderEvent,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Session as AuthSession } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'expo-router';
@@ -26,6 +30,25 @@ export function ProfileScreen({
   currentModel,
 }: ProfileScreenProps) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const panResponderRef = useRef<any>(null);
+
+  // Setup pan responder for swipe down to dismiss
+  useEffect(() => {
+    const panResponder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10; // Detect downward swipe
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          // Swipe down distance threshold
+          onClose();
+        }
+      },
+    });
+    panResponderRef.current = panResponder;
+  }, [onClose]);
 
   const userName = session?.user?.user_metadata?.name ||
                    session?.user?.email?.split('@')[0] ||
@@ -71,10 +94,18 @@ export function ProfileScreen({
 
   return (
     <Modal visible={isVisible} animationType="slide" transparent={false}>
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+      {/* Main container with pan responder for swipe down */}
+      <View
+        style={styles.container}
+        {...(panResponderRef.current?.panHandlers || {})}
+      >
+        {/* Header with safe area insets */}
+        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={onClose}
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+          >
             <Text style={styles.closeIcon}>✕</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Profile</Text>
@@ -149,7 +180,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#1E1E2E',
