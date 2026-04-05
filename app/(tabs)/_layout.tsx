@@ -1,59 +1,144 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { View, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { supabase } from '@/lib/supabase';
+import { BottomNavigationBar } from '@/components/BottomNavigationBar';
+import { NavigationDrawer } from '@/components/NavigationDrawer';
+import { ProfileScreen } from '@/components/ProfileScreen';
+import { DiscoverScreen } from '@/components/DiscoverScreen';
+import { LibraryScreen } from '@/components/LibraryScreen';
+import {
+  getAllConversations,
+  createConversation,
+  ConversationSession,
+} from '@/lib/conversationService';
+import type { Session } from '@supabase/supabase-js';
 
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { ACCENT_GREEN, ACCENT_BLUE, HEADER_BG, INACTIVE_TAB } from '@/constants/theme';
+// Dynamic import of ChatScreen
+import ChatScreenComponent from '@/app/(tabs)/chat';
+
+type TabType = 'home' | 'discover' | 'library' | 'new';
 
 export default function TabLayout() {
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<TabType>('home');
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSession[]>([]);
+  const [session, setSession] = useState<Session | null>(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState('llama3.3:70b');
+
+  // Load session
+  useEffect(() => {
+    const loadSession = async () => {
+      const { data: { session: sess } } = await supabase.auth.getSession();
+      setSession(sess);
+      if (sess) {
+        loadConversations(sess.user.id);
+      }
+    };
+    loadSession();
+  }, []);
+
+  // Load conversations
+  const loadConversations = useCallback(async (userId: string) => {
+    try {
+      const convs = await getAllConversations(userId);
+      setConversations(convs);
+    } catch (err) {
+      console.error('[TabLayout] Failed to load conversations:', err);
+    }
+  }, []);
+
+  // Handle tab press
+  const handleTabPress = useCallback(async (tab: TabType) => {
+    if (tab === 'new') {
+      // Create new conversation
+      if (session?.user.id) {
+        try {
+          const newConv = await createConversation(session.user.id, 'New conversation');
+          setCurrentConversationId(newConv.id);
+          setConversations((prev) => [newConv, ...prev]);
+          setActiveTab('home');
+        } catch (err) {
+          console.error('[TabLayout] Failed to create conversation:', err);
+        }
+      }
+    } else {
+      setActiveTab(tab);
+    }
+  }, [session?.user.id]);
+
+  // Handle conversation selection
+  const handleSelectConversation = useCallback((id: string) => {
+    setCurrentConversationId(id);
+    setActiveTab('home');
+  }, []);
+
+  // Handle new conversation from drawer
+  const handleNewConversation = useCallback(async () => {
+    if (session?.user.id) {
+      try {
+        const newConv = await createConversation(session.user.id, 'New conversation');
+        setCurrentConversationId(newConv.id);
+        setConversations((prev) => [newConv, ...prev]);
+        setActiveTab('home');
+      } catch (err) {
+        console.error('[TabLayout] Failed to create conversation:', err);
+      }
+    }
+  }, [session?.user.id]);
+
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: ACCENT_GREEN,
-        tabBarInactiveTintColor: INACTIVE_TAB,
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarStyle: {
-          backgroundColor: HEADER_BG,
-          borderTopColor: ACCENT_BLUE,
-          borderTopWidth: 1,
-        },
-      }}>
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: 'Chat',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="message.fill" color={color} />,
-        }}
+    <View style={styles.container}>
+      {/* Main Content */}
+      <View style={styles.content}>
+        {activeTab === 'home' && (
+          <ChatScreenComponent />
+        )}
+        {activeTab === 'discover' && <DiscoverScreen />}
+        {activeTab === 'library' && <LibraryScreen />}
+      </View>
+
+      {/* Bottom Navigation */}
+      <BottomNavigationBar
+        activeTab={activeTab}
+        onTabPress={handleTabPress}
+        onHamburgerPress={() => setIsDrawerOpen(true)}
       />
-      <Tabs.Screen
-        name="run"
-        options={{
-          title: 'Run',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="play.fill" color={color} />,
+
+      {/* Navigation Drawer */}
+      <NavigationDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        conversations={conversations}
+        onSelectConversation={handleSelectConversation}
+        onNewConversation={handleNewConversation}
+        onProfilePress={() => {
+          setIsDrawerOpen(false);
+          setShowProfileModal(true);
         }}
+        session={session}
       />
-      <Tabs.Screen
-        name="files"
-        options={{
-          title: 'Files',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="folder.fill" color={color} />,
-        }}
+
+      {/* Profile Modal */}
+      <ProfileScreen
+        isVisible={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        session={session}
+        currentModel={selectedModel}
       />
-      <Tabs.Screen
-        name="editor"
-        options={{
-          title: 'Editor',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="pencil.circle.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gear" color={color} />,
-        }}
-      />
-    </Tabs>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0A0A0F',
+  },
+  content: {
+    flex: 1,
+  },
+});

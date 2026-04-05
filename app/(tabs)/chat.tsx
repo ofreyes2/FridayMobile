@@ -792,36 +792,9 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
       >
-        {/* Professional Header */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View style={styles.titleSection}>
-              <Text style={styles.appName}>F.R.I.D.A.Y.</Text>
-              <View style={styles.statusIndicator}>
-                <Animated.View
-                  style={[
-                    styles.statusDot,
-                    {
-                      backgroundColor:
-                        serverStatus === 'online' ? Colors.accentSuccess : Colors.error,
-                    },
-                  ]}
-                />
-                <Text style={styles.statusLabel}>
-                  {serverStatus === 'online' ? 'ONLINE' : 'OFFLINE'}
-                </Text>
-              </View>
-            </View>
-            <AvatarDropdown session={session} />
-          </View>
-
-          {/* Greeting and Date */}
-          <View style={styles.headerBottom}>
-            <Text style={styles.greeting}>
-              {getGreeting(userProfile.name || 'Friend')}
-            </Text>
-            <Text style={styles.date}>{formatDate()}</Text>
-          </View>
+        {/* Minimal Top Bar with Conversation Title */}
+        <View style={styles.minimalHeader}>
+          <Text style={styles.conversationTitle}>New conversation ↓</Text>
         </View>
 
         <ScrollView
@@ -1145,6 +1118,20 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
     borderBottomWidth: 1,
     backgroundColor: Colors.surface,
+  },
+  minimalHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomColor: Colors.border,
+    borderBottomWidth: 1,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+  },
+  conversationTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.accent,
+    textAlign: 'center',
   },
   headerTop: {
     flexDirection: 'row',
