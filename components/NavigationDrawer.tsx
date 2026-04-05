@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Animated,
   GestureResponderEvent,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Session as DBSession, groupSessionsByDate, GroupedSessions } from '@/lib/conversationService';
@@ -33,7 +34,9 @@ export function NavigationDrawer({
   session,
 }: NavigationDrawerProps) {
   const insets = useSafeAreaInsets();
-  const slideAnim = React.useRef(new Animated.Value(-300)).current;
+  const screenWidth = Dimensions.get('window').width;
+  const drawerWidth = screenWidth * 0.82;
+  const slideAnim = React.useRef(new Animated.Value(-drawerWidth)).current;
 
   useEffect(() => {
     if (isOpen) {
@@ -44,12 +47,12 @@ export function NavigationDrawer({
       }).start();
     } else {
       Animated.timing(slideAnim, {
-        toValue: -300,
+        toValue: -drawerWidth,
         duration: 300,
         useNativeDriver: true,
       }).start();
     }
-  }, [isOpen, slideAnim]);
+  }, [isOpen, slideAnim, drawerWidth]);
 
   const grouped = groupSessionsByDate(sessions);
   const userName = session?.user?.user_metadata?.name ||
@@ -112,6 +115,7 @@ export function NavigationDrawer({
         style={[
           styles.drawer,
           {
+            width: drawerWidth,
             transform: [{ translateX: slideAnim }],
             paddingTop: insets.top + 16,
           },
@@ -133,7 +137,11 @@ export function NavigationDrawer({
         </View>
 
         {/* Sessions List */}
-        <ScrollView style={styles.sessionsList} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.sessionsList}
+          contentContainerStyle={sessions.length === 0 ? styles.scrollContentCentered : undefined}
+          showsVerticalScrollIndicator={false}
+        >
           {renderSessionSection('Today', grouped.today)}
           {renderSessionSection('Yesterday', grouped.yesterday)}
           {renderSessionSection('Past 7 days', grouped.past7days)}
@@ -183,7 +191,7 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    width: 300,
+    width: '100%', // width is set dynamically in render
     backgroundColor: '#12121A',
     flexDirection: 'column',
     borderRightWidth: 1,
@@ -194,6 +202,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#1E1E2E',
+    backgroundColor: '#0A0A0F',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -255,7 +264,12 @@ const styles = StyleSheet.create({
     color: '#5A5A7A',
     marginTop: 2,
   },
+  scrollContentCentered: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 32,
