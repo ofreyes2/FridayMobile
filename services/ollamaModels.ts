@@ -15,7 +15,7 @@ export interface OllamaModelsResponse {
   models: OllamaModel[]
 }
 
-const OLLAMA_ENDPOINT = 'http://192.168.1.219:11434'
+const OLLAMA_ENDPOINT = 'http://100.112.253.127:11434'
 
 /**
  * Fetch available models from Ollama

@@ -52,7 +52,7 @@ export default function SettingsScreen() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch('http://192.168.1.219:11434/api/tags', {
+      const response = await fetch('http://100.112.253.127:11434/api/tags', {
         method: 'GET',
         signal: controller.signal,
       });
@@ -377,7 +377,7 @@ export default function SettingsScreen() {
             </View>
 
             <Text style={styles.urlText}>
-              http://192.168.1.219:11434
+              http://100.112.253.127:11434
             </Text>
 
             {availableModels.length > 0 && (

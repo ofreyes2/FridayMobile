@@ -98,7 +98,7 @@ export default function ChatScreen() {
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
     enabled: true,
-    ollamaEndpoint: 'http://192.168.1.219:11434',
+    ollamaEndpoint: 'http://100.112.253.127:11434',
     ollamaModel: selectedModel,
     userSettings: {
       name: userProfile.name || 'Friend',
@@ -157,7 +157,7 @@ export default function ChatScreen() {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch('http://192.168.1.219:11434/api/tags', {
+      const response = await fetch('http://100.112.253.127:11434/api/tags', {
         method: 'GET',
         signal: controller.signal,
       });
@@ -329,7 +329,6 @@ export default function ChatScreen() {
       }
 
       loadModels();
-      initializeSession();
       checkServerStatus();
     };
 
@@ -337,6 +336,13 @@ export default function ChatScreen() {
     const interval = setInterval(checkServerStatus, 30000);
     return () => clearInterval(interval);
   }, [loadSettings, loadModels, checkServerStatus, userProfile.name]);
+
+  // Create initial session when authSession is available
+  useEffect(() => {
+    if (authSession?.user.id && !currentSessionId) {
+      initializeSession();
+    }
+  }, [authSession?.user.id, currentSessionId]);
 
   // KITT-style scanner animation
   useEffect(() => {
