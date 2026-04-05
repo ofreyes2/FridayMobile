@@ -14,6 +14,7 @@ import {
   Modal,
   FlatList,
   Image,
+  AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
@@ -55,6 +56,7 @@ import {
 } from '@/services/fridayHistory';
 import { fetchOllamaModels, getOllamaEndpoint } from '@/services/ollamaModels';
 import { generateImage } from '@/services/comfyui';
+import { checkConnectionStatus, getConnectionMessage, type ConnectionStatus } from '@/services/connectionStatus';
 import { useFriday } from '@/hooks/useFriday';
 import { supabase } from '@/lib/supabase';
 import {
@@ -140,6 +142,9 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
   const [showImageGenModal, setShowImageGenModal] = useState(false);
   const [imageGenPrompt, setImageGenPrompt] = useState('');
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('red');
+  const [showConnectionTooltip, setShowConnectionTooltip] = useState(false);
+  const [connectionVia, setConnectionVia] = useState<'tailscale' | 'local'>('tailscale');
 
   // Friday AI Assistant integration with dynamic user settings
   const friday = useFriday({
@@ -185,13 +190,18 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
   // Load models from Ollama
   const loadModels = useCallback(async () => {
     console.log('[ChatScreen] Fetching available models from Ollama...');
+    const endpoint = await getOllamaEndpoint();
+    console.log('[ChatScreen] Loading models from endpoint:', endpoint);
     const models = await fetchOllamaModels();
+    console.log('[ChatScreen] Raw models response:', JSON.stringify(models));
     setAvailableModels(models);
     if (models.length > 0) {
       console.log('[ChatScreen] Found', models.length, 'models');
       // Only set default if no preference saved yet
       const savedModel = await AsyncStorage.getItem('selectedModel');
-      if (!savedModel) {
+      const modelExists = savedModel && models.some(m => m.model === savedModel || m.name === savedModel);
+      if (!savedModel || !modelExists) {
+        if (savedModel && !modelExists) console.log('[ChatScreen] Saved model not available:', savedModel, '- resetting to default');
         await AsyncStorage.setItem('selectedModel', DEFAULT_MODEL);
         setSelectedModel(DEFAULT_MODEL);
         console.log('[ChatScreen] Set default model to', DEFAULT_MODEL);
@@ -516,6 +526,39 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
     return () => clearInterval(interval);
   }, []);
 
+  // Check connection status on mount, every 30 seconds, and on app foreground
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const status = await checkConnectionStatus();
+        setConnectionStatus(status);
+        // Determine which endpoint worked by checking them in order
+        setConnectionVia('tailscale'); // Default to tailscale
+      } catch (error) {
+        console.error('[ChatScreen] Error checking connection status:', error);
+      }
+    };
+
+    // Check on mount
+    checkConnection();
+
+    // Check every 30 seconds
+    const interval = setInterval(checkConnection, 30000);
+
+    // Listen for app foreground/background
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        console.log('[ChatScreen] App came to foreground, checking connection');
+        checkConnection();
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, []);
+
   const initializeSession = async () => {
     try {
       if (!authSession?.user.id) {
@@ -638,28 +681,72 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
           return;
         }
 
-        // Request permissions (Release build with native modules)
-        console.log('[ChatScreen] Requesting microphone and speech recognition permissions...');
+        // Check current permission status first (Release build with native modules)
+        console.log('[ChatScreen] Checking microphone and speech recognition permissions...');
 
-        const micPermission = await request(PERMISSIONS.IOS.MICROPHONE);
-        console.log('[ChatScreen] Microphone permission:', micPermission);
+        const micStatus = await check(PERMISSIONS.IOS.MICROPHONE);
+        const speechStatus = await check(PERMISSIONS.IOS.SPEECH_RECOGNITION);
 
-        const speechPermission = await request(PERMISSIONS.IOS.SPEECH_RECOGNITION);
-        console.log('[ChatScreen] Speech recognition permission:', speechPermission);
+        console.log('[ChatScreen] Microphone status:', micStatus, 'Speech status:', speechStatus);
 
-        // Check if both permissions were granted
-        if (
-          micPermission !== RESULTS.GRANTED ||
-          speechPermission !== RESULTS.GRANTED
-        ) {
-          console.warn('[ChatScreen] Permissions not granted. Mic:', micPermission, 'Speech:', speechPermission);
-          Alert.alert(
-            'Permission Required',
-            'Friday needs microphone and speech recognition access to use voice features.'
-          );
+        // If both already granted, skip requesting and go straight to voice
+        if (micStatus === RESULTS.GRANTED && speechStatus === RESULTS.GRANTED) {
+          console.log('[ChatScreen] Permissions already granted, starting voice recognition...');
+          setIsVoiceConversation(true);
+          voiceConversationRef.current = true;
+          setVoiceTranscript('');
+          setInput('');
+          setVoiceConversationStatus('listening');
+
+          try {
+            await Voice.start('en-US');
+            console.log('[ChatScreen] Entered voice conversation mode');
+          } catch (voiceError) {
+            console.error('[ChatScreen] Voice start error:', voiceError);
+            const errorMsg = voiceError instanceof Error ? voiceError.message : String(voiceError);
+            Alert.alert('Voice Error', errorMsg || 'Could not start voice recognition');
+
+            setIsVoiceConversation(false);
+            voiceConversationRef.current = false;
+            setIsVoiceListening(false);
+            setVoiceConversationStatus(null);
+          }
           return;
         }
 
+        // Request microphone permission if not granted
+        if (micStatus !== RESULTS.GRANTED) {
+          console.log('[ChatScreen] Requesting microphone permission...');
+          const micResult = await request(PERMISSIONS.IOS.MICROPHONE);
+          console.log('[ChatScreen] Microphone permission result:', micResult);
+
+          if (micResult !== RESULTS.GRANTED) {
+            console.warn('[ChatScreen] Microphone permission denied');
+            Alert.alert(
+              'Permission Required',
+              'Please allow microphone access in Settings to use voice features.'
+            );
+            return;
+          }
+        }
+
+        // Request speech recognition permission if not granted
+        if (speechStatus !== RESULTS.GRANTED) {
+          console.log('[ChatScreen] Requesting speech recognition permission...');
+          const speechResult = await request(PERMISSIONS.IOS.SPEECH_RECOGNITION);
+          console.log('[ChatScreen] Speech recognition permission result:', speechResult);
+
+          if (speechResult !== RESULTS.GRANTED) {
+            console.warn('[ChatScreen] Speech recognition permission denied');
+            Alert.alert(
+              'Permission Required',
+              'Please allow speech recognition access in Settings to use voice features.'
+            );
+            return;
+          }
+        }
+
+        // Both permissions granted - start voice
         console.log('[ChatScreen] Permissions granted, starting voice recognition...');
         setIsVoiceConversation(true);
         voiceConversationRef.current = true;
@@ -1008,6 +1095,19 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
+      // Auto-detect if Friday is suggesting image generation
+      const responseLower = response.toLowerCase();
+      if (
+        responseLower.includes('generate image') ||
+        responseLower.includes('create an image') ||
+        responseLower.includes('generate an image') ||
+        responseLower.includes('tap the + button') ||
+        responseLower.includes('select "generate image"')
+      ) {
+        console.log('[ChatScreen] Detected image generation suggestion, opening modal');
+        setShowImageGenModal(true);
+      }
+
       // Save to Supabase and local history
       if (currentSessionId && authSession?.user.id) {
         try {
@@ -1101,6 +1201,13 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
       }
     } finally {
       setLoading(false);
+      // Check connection status after message attempt
+      try {
+        const status = await checkConnectionStatus();
+        setConnectionStatus(status);
+      } catch (err) {
+        console.error('[ChatScreen] Error checking connection after message:', err);
+      }
     }
   };
 
@@ -1210,10 +1317,36 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
       >
-        {/* Date text at very top */}
-        <View style={{ paddingTop: insets.top - 50, alignItems: 'center' }}>
-          <Text style={{ fontSize: 12, color: '#8888AA', fontWeight: '500' }}>
-            {formatCurrentDate()}
+        {/* Date text with connection indicator at very top */}
+        <TouchableOpacity
+          style={{ paddingTop: insets.top - 50, alignItems: 'center' }}
+          onPress={() => setShowConnectionTooltip(true)}
+          activeOpacity={0.7}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor:
+                  connectionStatus === 'green'
+                    ? '#00FF88'
+                    : connectionStatus === 'yellow'
+                    ? '#FFD700'
+                    : '#FF4466',
+              }}
+            />
+            <Text style={{ fontSize: 12, color: '#8888AA', fontWeight: '500' }}>
+              {formatCurrentDate()}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* FRIDAY label above cyan line */}
+        <View style={{ paddingLeft: 14, paddingBottom: 4 }}>
+          <Text style={{ fontSize: 10, color: '#00D4FF', fontWeight: '600', letterSpacing: 3, opacity: 0.7 }}>
+            F.R.I.D.A.Y.
           </Text>
         </View>
 
@@ -1274,6 +1407,7 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
                     <Image
                       source={{ uri: `data:image/jpeg;base64,${message.imageBase64}` }}
                       style={styles.messageBubbleImage}
+                      resizeMode="contain"
                     />
                   )}
                   {message.fileName && (
@@ -1575,6 +1709,39 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
           <View style={styles.voiceConversationOverlay} pointerEvents="none" />
         )}
       </KeyboardAvoidingView>
+
+      {/* Connection Status Tooltip Modal */}
+      <Modal
+        visible={showConnectionTooltip}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowConnectionTooltip(false)}
+      >
+        <TouchableOpacity
+          style={styles.tooltipOverlay}
+          activeOpacity={1}
+          onPress={() => setShowConnectionTooltip(false)}
+        >
+          <View style={styles.tooltipContainer}>
+            <View
+              style={[
+                styles.tooltipDot,
+                {
+                  backgroundColor:
+                    connectionStatus === 'green'
+                      ? '#00FF88'
+                      : connectionStatus === 'yellow'
+                      ? '#FFD700'
+                      : '#FF4466',
+                },
+              ]}
+            />
+            <Text style={styles.tooltipText}>
+              {getConnectionMessage(connectionStatus, connectionVia)}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* History Modal */}
       <Modal visible={showHistoryModal} animationType="slide" transparent={true}>
@@ -2174,8 +2341,8 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   messageBubbleImage: {
-    width: 200,
-    height: 150,
+    width: '100%',
+    height: 300,
     borderRadius: 8,
     marginBottom: 8,
   },
@@ -2331,5 +2498,37 @@ const styles = StyleSheet.create({
     color: '#00D4FF',
     fontFamily: 'Courier New',
     fontWeight: '500',
+  },
+  tooltipOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tooltipContainer: {
+    backgroundColor: '#1A1A22',
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    maxWidth: '80%',
+    borderWidth: 1,
+    borderColor: '#2A2A3A',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  tooltipDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginTop: 4,
+    flexShrink: 0,
+  },
+  tooltipText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    fontWeight: '500',
+    lineHeight: 20,
+    flex: 1,
   },
 });
