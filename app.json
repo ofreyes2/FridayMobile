@@ -24,8 +24,10 @@
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "This app connects to local Ollama instance for AI processing",
         "NSBonjourServiceTypes": [
+          "_http._tcp",
           "_http._tcp"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       },
       "splash": {
         "image": "./assets/splash.png",
