@@ -895,8 +895,14 @@ export default function ChatScreen() {
         style={styles.flex}
       >
         {/* Minimal Top Bar with Conversation Title */}
-        <View style={[styles.minimalHeader, { paddingTop: insets.top }]}>
-          <Text style={styles.conversationTitle}>New conversation ↓</Text>
+        <View style={[styles.minimalHeader, { paddingTop: insets.top - 8 }]}>
+          <TouchableOpacity
+            onPress={() => setShowHistoryModal(true)}
+            style={{ flexDirection: 'row', alignItems: 'center' }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.conversationTitle}>New conversation ↓</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -1223,17 +1229,19 @@ const styles = StyleSheet.create({
   },
   minimalHeader: {
     paddingHorizontal: 16,
-    paddingBottom: 2,
+    paddingBottom: 0,
     borderBottomColor: Colors.border,
     borderBottomWidth: 1,
     backgroundColor: Colors.background,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   conversationTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.accent,
     textAlign: 'center',
+    paddingVertical: 6,
   },
   headerTop: {
     flexDirection: 'row',
