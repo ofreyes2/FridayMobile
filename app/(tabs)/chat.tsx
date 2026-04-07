@@ -131,6 +131,7 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [isVoiceConversation, setIsVoiceConversation] = useState(false);
   const [voiceConversationStatus, setVoiceConversationStatus] = useState<'listening' | 'thinking' | 'speaking' | null>(null);
+  const [shouldAutoSendOnSilence, setShouldAutoSendOnSilence] = useState(false);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceConversationRef = useRef(false);
   const [session, setSession] = useState<any>(null);
@@ -287,11 +288,10 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
         }
         silenceTimeoutRef.current = setTimeout(() => {
           console.log('[ChatScreen] Silence detected, auto-sending message');
-          // Auto-send will be handled in the UI
+          setShouldAutoSendOnSilence(true);
         }, 1500); // 1.5 second silence threshold
       }
     };
-
     Voice.onSpeechError = (error: any) => {
       console.error('[ChatScreen] Voice error:', error);
       setIsVoiceListening(false);
