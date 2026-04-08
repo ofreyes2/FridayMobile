@@ -97,7 +97,7 @@ export const memoriesDB = {
 
   fetchByType: async (
     userId: string,
-    type: 'preference' | 'fact' | 'learning'
+    type: 'user' | 'feedback' | 'project' | 'reference' | 'preference' | 'fact' | 'learning'
   ): Promise<FridayMemoryRow[]> => {
     try {
       const { data, error } = await supabase

@@ -1,6 +1,6 @@
 /**
  * Friday Memory Store - SQLite Persistence Layer
- * Pattern: Factory pattern with typed queries
+ * Pattern 1: Typed memories (user/feedback/project/reference) from Claude Code memdir
  */
 
 import * as SQLite from 'expo-sqlite'
@@ -11,12 +11,12 @@ export class FridayMemoryStore {
 
   /**
    * Factory function: Create and initialize memory store
-   * Pattern: Async factory from Claude Code
    */
   static async create(dbName: string = 'friday.db'): Promise<FridayMemoryStore> {
     const db = await SQLite.openDatabaseAsync(dbName)
     const store = new FridayMemoryStore(db)
     await store.initSchema()
+    await store.migrateMemoryTypes()
     return store
   }
 
@@ -26,7 +26,6 @@ export class FridayMemoryStore {
 
   /**
    * Initialize database schema
-   * Creates tables for memories, personality, and conversations
    */
   private async initSchema(): Promise<void> {
     try {
@@ -60,6 +59,9 @@ export class FridayMemoryStore {
         CREATE INDEX IF NOT EXISTS idx_memories_timestamp
           ON memories(timestamp DESC);
 
+        CREATE INDEX IF NOT EXISTS idx_memories_type
+          ON memories(type);
+
         CREATE INDEX IF NOT EXISTS idx_conversations_timestamp
           ON conversations(timestamp DESC);
       `)
@@ -70,8 +72,32 @@ export class FridayMemoryStore {
   }
 
   /**
+   * Migrate old memory types to new typed system.
+   * interaction -> user, preference -> feedback, fact -> reference, learning -> project
+   */
+  private async migrateMemoryTypes(): Promise<void> {
+    try {
+      const migrations: [string, FridayMemoryType][] = [
+        ['interaction', 'user'],
+        ['preference', 'feedback'],
+        ['fact', 'reference'],
+        ['learning', 'project'],
+      ]
+
+      for (const [oldType, newType] of migrations) {
+        await this.db.runAsync(
+          `UPDATE memories SET type = ? WHERE type = ?`,
+          [newType, oldType]
+        )
+      }
+    } catch (error) {
+      // Migration is best-effort — don't crash on failure
+      console.warn('Memory type migration skipped:', error)
+    }
+  }
+
+  /**
    * Get recent memories with optional type filter
-   * Pattern: Typed query from Claude Code
    */
   async getRecentMemories(limit: number = 10, type?: FridayMemoryType): Promise<FridayMemory[]> {
     try {
@@ -95,6 +121,45 @@ export class FridayMemoryStore {
   }
 
   /**
+   * Get all memory headers (id, type, first line of content) for relevance selection.
+   * Pattern: Memory index scan from Claude Code findRelevantMemories.ts
+   */
+  async getMemoryHeaders(): Promise<{ id: string; type: FridayMemoryType; summary: string }[]> {
+    try {
+      const result = await this.db.getAllAsync<{ id: string; type: string; content: string }>(
+        `SELECT id, type, content FROM memories ORDER BY timestamp DESC LIMIT 50`
+      )
+
+      return (result || []).map(row => ({
+        id: row.id,
+        type: row.type as FridayMemoryType,
+        summary: row.content.split('\n')[0].slice(0, 120),
+      }))
+    } catch (error) {
+      console.error('Failed to get memory headers:', error)
+      return []
+    }
+  }
+
+  /**
+   * Get specific memories by IDs (for loading after relevance selection).
+   */
+  async getMemoriesByIds(ids: string[]): Promise<FridayMemory[]> {
+    if (ids.length === 0) return []
+    try {
+      const placeholders = ids.map(() => '?').join(',')
+      const result = await this.db.getAllAsync<FridayMemory>(
+        `SELECT * FROM memories WHERE id IN (${placeholders})`,
+        ids
+      )
+      return result || []
+    } catch (error) {
+      console.error('Failed to get memories by IDs:', error)
+      return []
+    }
+  }
+
+  /**
    * Get personality configuration
    */
   async getPersonality(): Promise<FridayPersonality | null> {
@@ -104,7 +169,6 @@ export class FridayMemoryStore {
       )
       if (!result) return null
 
-      // Parse JSON fields back to arrays
       return {
         id: result.id,
         name: result.name,
@@ -120,8 +184,7 @@ export class FridayMemoryStore {
   }
 
   /**
-   * Add a new memory
-   * Pattern: Type-safe mutation from Claude Code
+   * Add a new typed memory
    */
   async addMemory(
     type: FridayMemoryType,
@@ -144,7 +207,6 @@ export class FridayMemoryStore {
 
   /**
    * Save or update personality
-   * Pattern: Immutable update from Claude Code
    */
   async setPersonality(
     personality: Omit<FridayPersonality, 'id' | 'updatedAt'>
@@ -235,6 +297,44 @@ export class FridayMemoryStore {
     } catch (error) {
       console.error('Failed to add conversation message:', error)
       throw error
+    }
+  }
+
+  /**
+   * Get memory count by type (for usage tracking / diagnostics).
+   */
+  async getMemoryCounts(): Promise<Record<FridayMemoryType, number>> {
+    const counts: Record<FridayMemoryType, number> = {
+      user: 0,
+      feedback: 0,
+      project: 0,
+      reference: 0,
+    }
+
+    try {
+      const rows = await this.db.getAllAsync<{ type: string; count: number }>(
+        `SELECT type, COUNT(*) as count FROM memories GROUP BY type`
+      )
+      for (const row of rows || []) {
+        if (row.type in counts) {
+          counts[row.type as FridayMemoryType] = row.count
+        }
+      }
+    } catch (error) {
+      console.error('Failed to get memory counts:', error)
+    }
+
+    return counts
+  }
+
+  /**
+   * Delete a memory by ID (used during dream pruning).
+   */
+  async deleteMemory(id: string): Promise<void> {
+    try {
+      await this.db.runAsync(`DELETE FROM memories WHERE id = ?`, [id])
+    } catch (error) {
+      console.error('Failed to delete memory:', error)
     }
   }
 

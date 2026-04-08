@@ -33,7 +33,7 @@ export type FridayConversationUpdate = Partial<FridayConversationInsert>;
 export interface FridayMemoryRow {
   id: string;
   user_id: string;
-  type: 'preference' | 'fact' | 'learning';
+  type: 'user' | 'feedback' | 'project' | 'reference' | 'preference' | 'fact' | 'learning';
   content: string;
   relevance_score: number;
   learned_at: number;

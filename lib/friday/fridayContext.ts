@@ -1,9 +1,18 @@
 /**
  * Friday Context Builder - Dynamic Prompt Composition
- * Pattern: Composable sections from Claude Code prompts.ts
+ * Pattern 4: Dynamic system prompt builder (Claude Code systemPrompt.ts)
+ *
+ * Builds system prompts from multiple composable sections:
+ * - Base personality
+ * - Current context (date, location)
+ * - Typed memories (dynamically selected)
+ * - Active tasks
+ * - User context
+ * - Model capabilities
+ * - Reasoning mode (topic-sensitive)
  */
 
-import type { FridayMemory, FridayPersonality, UserSettings } from './types'
+import type { FridayMemory, FridayPersonality, UserSettings, FridayTask } from './types'
 
 /**
  * Detect if user is asking a question that requires deep reasoning
@@ -21,7 +30,7 @@ function isDeepReasoningTopic(input: string): boolean {
 
 /**
  * Build Friday's system prompt dynamically with personality and context
- * Pattern: Dynamic prompt composition from Claude Code
+ * Pattern 4: Composable sections from Claude Code systemPrompt.ts
  */
 export function buildFridaySystemPrompt(
   basePrompt: string,
@@ -30,7 +39,8 @@ export function buildFridaySystemPrompt(
   userSettings: UserSettings,
   ollamaModel: string,
   interactionCount: number = 0,
-  userInput?: string
+  userInput?: string,
+  activeTasks?: FridayTask[]
 ): string {
   const sections = [
     // Base behavior with dynamic username
@@ -39,11 +49,16 @@ export function buildFridaySystemPrompt(
     // Personality section
     buildPersonalitySection(personality, interactionCount),
 
-    // Memory section
+    // Memory section (typed and grouped)
     buildMemorySection(recentMemories),
 
     // User context section
     buildUserContextSection(userSettings),
+
+    // Active tasks section (Pattern 3)
+    ...(activeTasks && activeTasks.length > 0
+      ? [buildActiveTasksSection(activeTasks)]
+      : []),
 
     // Reasoning mode section (if topic detected)
     ...(userInput && isDeepReasoningTopic(userInput)
@@ -75,7 +90,6 @@ This appears to be a complex topic. Please:
  * Friday's personality section: Dynamic based on configuration and warmth
  */
 function buildPersonalitySection(personality: FridayPersonality, interactionCount: number): string {
-  // Adjust warmth based on interaction count
   const warmthLevel = getWarmthLevel(interactionCount)
 
   return `## Your Personality
@@ -94,20 +108,27 @@ ${personality.interests.map(i => `- ${i}`).join('\n')}`
 }
 
 /**
- * Memory section: Include recent interactions for context
- * Pattern: Runtime context from Claude Code
+ * Memory section: Include recent interactions grouped by type
+ * Pattern 1: Typed memories from Claude Code
  */
 function buildMemorySection(memories: FridayMemory[]): string {
   if (memories.length === 0) return ''
 
   const grouped = groupMemoriesByType(memories)
 
-  return `## Context from Previous Interactions
+  const typeLabels: Record<string, string> = {
+    user: 'About Oscar',
+    feedback: 'How to Behave',
+    project: 'Active Projects',
+    reference: 'Reference Info',
+  }
+
+  return `## Context from Memory
 
 ${Object.entries(grouped)
   .map(([type, mems]) => {
-    const title = type.charAt(0).toUpperCase() + type.slice(1)
-    return `### ${title}s\n${mems.map(m => `- ${m.content}`).join('\n')}`
+    const title = typeLabels[type] || type.charAt(0).toUpperCase() + type.slice(1)
+    return `### ${title}\n${mems.map(m => `- ${m.content}`).join('\n')}`
   })
   .join('\n\n')}`
 }
@@ -125,6 +146,22 @@ Preferences:
 ${Object.entries(settings.preferences)
   .map(([key, value]) => `- ${key}: ${value}`)
   .join('\n')}`
+}
+
+/**
+ * Active tasks section (Pattern 3: Task awareness in prompt)
+ */
+function buildActiveTasksSection(tasks: FridayTask[]): string {
+  const lines = tasks.map(t => {
+    const elapsed = Math.round((Date.now() - t.startTime) / 1000)
+    return `- [${t.status}] ${t.description} (${elapsed}s elapsed)`
+  })
+
+  return `## Active Background Tasks
+
+${lines.join('\n')}
+
+You have tasks running in the background. You can mention their status if relevant.`
 }
 
 /**
@@ -166,47 +203,69 @@ function groupMemoriesByType(
 
 /**
  * Extract learnings from conversation for memory storage
- * Pattern: Context extraction from Claude Code
+ * Now returns typed memories (Pattern 1)
  */
 export function extractLearningsFromResponse(
   userInput: string,
   assistantResponse: string,
-  personality: FridayPersonality
-): { type: 'preference' | 'fact' | 'learning'; content: string; score: number }[] {
-  const learnings: { type: 'preference' | 'fact' | 'learning'; content: string; score: number }[] = []
+  _personality: FridayPersonality
+): { type: 'user' | 'feedback' | 'project' | 'reference'; content: string; score: number }[] {
+  const learnings: { type: 'user' | 'feedback' | 'project' | 'reference'; content: string; score: number }[] = []
 
-  // Detect preference mentions (simple heuristic)
+  const lowerInput = userInput.toLowerCase()
+
+  // Detect user preferences → feedback memory
   if (
-    userInput.toLowerCase().includes('prefer') ||
-    userInput.toLowerCase().includes('like') ||
-    userInput.toLowerCase().includes('dislike')
+    lowerInput.includes('prefer') ||
+    lowerInput.includes('don\'t') ||
+    lowerInput.includes('stop') ||
+    lowerInput.includes('instead')
   ) {
     learnings.push({
-      type: 'preference',
-      content: `User expressed preference: "${userInput}"`,
-      score: 0.7,
-    })
-  }
-
-  // Detect factual information in response
-  if (
-    assistantResponse.toLowerCase().includes('remember:') ||
-    assistantResponse.toLowerCase().includes('note:')
-  ) {
-    const firstLine = assistantResponse.split('\n')[0]
-    learnings.push({
-      type: 'fact',
-      content: firstLine,
+      type: 'feedback',
+      content: `User correction/preference: "${userInput}"`,
       score: 0.8,
     })
   }
 
-  // Detect learning from complex questions
-  if (userInput.length > 50 && userInput.includes('?')) {
+  // Detect personal info → user memory
+  if (
+    lowerInput.includes('i like') ||
+    lowerInput.includes('i am') ||
+    lowerInput.includes('my name') ||
+    lowerInput.includes('i work')
+  ) {
     learnings.push({
-      type: 'learning',
-      content: `Answered question: "${userInput.substring(0, 100)}..."`,
-      score: 0.6,
+      type: 'user',
+      content: `Personal info shared: "${userInput}"`,
+      score: 0.7,
+    })
+  }
+
+  // Detect "remember" requests → reference memory
+  if (
+    lowerInput.includes('remember') ||
+    assistantResponse.toLowerCase().includes('remember:') ||
+    assistantResponse.toLowerCase().includes('noted')
+  ) {
+    learnings.push({
+      type: 'reference',
+      content: `Remember request: "${userInput}"`,
+      score: 0.9,
+    })
+  }
+
+  // Detect project work → project memory
+  if (
+    lowerInput.includes('working on') ||
+    lowerInput.includes('project') ||
+    lowerInput.includes('deadline') ||
+    lowerInput.includes('deploy')
+  ) {
+    learnings.push({
+      type: 'project',
+      content: `Project mention: "${userInput.substring(0, 120)}"`,
+      score: 0.7,
     })
   }
 
@@ -215,7 +274,6 @@ export function extractLearningsFromResponse(
 
 /**
  * Get warmth level description based on interaction count
- * Friday gets warmer over time as trust builds
  */
 function getWarmthLevel(count: number): string {
   if (count === 0) return 'Cool & Professional (First Interaction)'

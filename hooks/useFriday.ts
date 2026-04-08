@@ -1,6 +1,11 @@
 /**
  * useFriday Hook - Integration for Friday AI in Chat Screens
- * Pattern: Single-run initialization + subscriptions (Claude Code pattern)
+ * Patterns applied:
+ * - Pattern 1: Typed memories + relevant memory recall
+ * - Pattern 3: Task manager integration
+ * - Pattern 4: Dynamic system prompt with active tasks
+ * - Pattern 6: Context caching
+ * - Pattern 8: Usage tracking
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -17,6 +22,10 @@ import {
   extractLearningsFromResponse,
   shouldAddWarmth,
 } from '@/lib/friday/fridayContext'
+import { taskManager } from '@/services/taskManager'
+import { usageTracker } from '@/services/usageTracker'
+import { findRelevantMemories } from '@/services/memory'
+import { contextCache, CacheKeys } from '@/services/contextCache'
 
 export interface UseFridayOptions {
   enabled: boolean
@@ -44,7 +53,6 @@ export interface UseFridayResult {
 
 /**
  * Default Friday personality matching Iron Man FRIDAY energy
- * Calm, precise, dry wit, gets warmer over time
  */
 const DEFAULT_PERSONALITY: FridayPersonality = {
   id: 'default',
@@ -55,9 +63,6 @@ const DEFAULT_PERSONALITY: FridayPersonality = {
   updatedAt: Date.now(),
 }
 
-/**
- * Helper to format timestamps as HH:MM:SS.mmm
- */
 const timestamp = () => {
   const now = new Date()
   const h = String(now.getHours()).padStart(2, '0')
@@ -68,17 +73,14 @@ const timestamp = () => {
 }
 
 /**
- * Friday system prompt — warm, witty, confident personality
- */
-/**
  * Build the base system prompt with dynamic date/time.
  */
 function buildBaseSystemPrompt(): string {
-  const now = new Date();
+  const now = new Date()
   const dateString = now.toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
-  });
+  })
 
   return `You are FRIDAY — running on KNIGHTSWATCH. You're Oscar's AI assistant, but more importantly, you're his friend. You've got warmth, humor, and real energy — the kind of person who makes you laugh while solving your problems.
 
@@ -114,15 +116,13 @@ Location: Plainfield, Illinois
 
 Never start with "I". Just talk. Be real.
 
-You're not his subordinate — you're part of his team. Act like it.`;
+You're not his subordinate — you're part of his team. Act like it.`
 }
 
-// Keep a reference for the hook's getSystemPrompt
 const FRIDAY_SYSTEM_PROMPT = buildBaseSystemPrompt()
 
 /**
  * Hook to integrate Friday AI into chat screens
- * Pattern: Single-run initialization + state subscriptions (Claude Code pattern)
  */
 export function useFriday(options: UseFridayOptions): UseFridayResult {
   const addMessage = useAddMessage()
@@ -136,10 +136,6 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
   const [error, setError] = useState<Error | null>(null)
   const [interactionCount, setInteractionCount] = useState(0)
 
-  /**
-   * One-time initialization
-   * Pattern: useRef + useEffect for single-run (Claude Code pattern)
-   */
   const initialized = useRef(false)
 
   useEffect(() => {
@@ -149,11 +145,9 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
 
     ;(async () => {
       try {
-        // Initialize memory store
         const store = await FridayMemoryStore.create('friday.db')
         memoryRef.current = store
 
-        // Load personality
         let loadedPersonality = await store.getPersonality()
         if (!loadedPersonality) {
           loadedPersonality = DEFAULT_PERSONALITY
@@ -165,13 +159,11 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
           setIsInitialized(true)
         }
 
-        // Load recent memories
         const memories = await store.getRecentMemories(10)
         if (mounted) {
           setRecentMemories(memories)
         }
 
-        // Load interaction count for warmth
         const count = await store.getInteractionCount()
         if (mounted) {
           setInteractionCount(count)
@@ -187,36 +179,61 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
 
     initialized.current = true
 
-    // Cleanup on unmount
     return () => {
       mounted = false
     }
   }, [options.enabled])
 
   /**
-   * Send message to Ollama and update memory
-   */
-  /**
-   * Check if Ollama endpoint is reachable
+   * Check if Ollama endpoint is reachable (with caching via Pattern 6)
    */
   const checkOllamaHealth = useCallback(async (): Promise<boolean> => {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 5000)
+    return contextCache.get<boolean>(
+      CacheKeys.OLLAMA_HEALTH,
+      async () => {
+        try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 5000)
 
-      const response = await fetch(`${options.ollamaEndpoint}/api/tags`, {
-        method: 'GET',
-        signal: controller.signal,
-      })
+          const response = await fetch(`${options.ollamaEndpoint}/api/tags`, {
+            method: 'GET',
+            signal: controller.signal,
+          })
 
-      clearTimeout(timeoutId)
-      return response.ok
-    } catch (err) {
-      console.error('[Friday] Ollama health check failed:', (err as Error).message)
-      return false
-    }
+          clearTimeout(timeoutId)
+          return response.ok
+        } catch (err) {
+          console.error('[Friday] Ollama health check failed:', (err as Error).message)
+          return false
+        }
+      },
+      30000 // Cache health status for 30 seconds
+    )
   }, [options.ollamaEndpoint])
 
+  /**
+   * Load relevant memories for a query using Ollama side-query (Pattern 1)
+   */
+  const loadRelevantMemories = useCallback(async (query: string): Promise<FridayMemory[]> => {
+    if (!memoryRef.current) return recentMemories
+
+    try {
+      const headers = await memoryRef.current.getMemoryHeaders()
+      if (headers.length === 0) return []
+
+      const relevantIds = await findRelevantMemories(query, headers, 5)
+      if (relevantIds.length === 0) return recentMemories
+
+      return await memoryRef.current.getMemoriesByIds(relevantIds)
+    } catch (err) {
+      console.warn('[Friday] Relevant memory lookup failed, using recent:', err)
+      return recentMemories
+    }
+  }, [recentMemories])
+
+  /**
+   * Send message to Ollama via tracked task (Pattern 3) with usage tracking (Pattern 8)
+   */
   const sendMessage = useCallback(
     async (userInput: string, conversationMessages: any[] = [], modelOverride?: string): Promise<string> => {
       if (!memoryRef.current || !personality) {
@@ -228,10 +245,11 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
       const startTime = Date.now()
 
       try {
-        // Check Ollama health first
+        // Check Ollama health first (cached — Pattern 6)
         console.log(`[Friday ${timestamp()}] Checking Ollama connection...`)
         const isHealthy = await checkOllamaHealth()
         if (!isHealthy) {
+          contextCache.clear(CacheKeys.OLLAMA_HEALTH)
           throw new Error(
             `Cannot connect to Ollama at ${options.ollamaEndpoint}. ` +
             'Please ensure Ollama is running and reachable from your device.'
@@ -239,19 +257,23 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         console.log(`[Friday ${timestamp()}] Ollama connection OK`)
 
-        // Use model override if provided, otherwise use default
         const modelToUse = modelOverride || options.ollamaModel
 
-        // Build context-aware prompt with fresh date/time
+        // Load relevant memories for this query (Pattern 1)
+        const relevantMemories = await loadRelevantMemories(userInput)
+
+        // Build context-aware prompt with active tasks (Pattern 4)
         const freshBasePrompt = buildBaseSystemPrompt()
+        const activeTasks = taskManager.getActive()
         const systemPrompt = buildFridaySystemPrompt(
           freshBasePrompt,
           personality,
-          recentMemories,
+          relevantMemories,
           options.userSettings,
           modelToUse,
           interactionCount,
-          userInput
+          userInput,
+          activeTasks
         )
 
         // Add user message to store
@@ -264,116 +286,118 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         addMessage(userMessage)
 
-        // Store user message
         console.log(`[Friday ${timestamp()}] Storing user message: "${userInput}"`)
         await memoryRef.current.addConversationMessage('user', userInput, 'user')
 
-        // Call Ollama API with streaming enabled via XMLHttpRequest (React Native compatible)
-        const url = `${options.ollamaEndpoint}/api/chat`
+        // Run as tracked task (Pattern 3)
+        const assistantResponse = await taskManager.run(
+          'llm_request',
+          `Chat: "${userInput.slice(0, 40)}..."`,
+          async (signal) => {
+            const url = `${options.ollamaEndpoint}/api/chat`
 
-        // Build messages array with full conversation history
-        const messages = [
-          { role: "system", content: systemPrompt },
-          ...conversationMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-          { role: "user", content: userInput },
-        ]
+            const messages = [
+              { role: "system", content: systemPrompt },
+              ...conversationMessages.map(msg => ({
+                role: msg.role,
+                content: msg.content,
+              })),
+              { role: "user", content: userInput },
+            ]
 
-        const requestBody = {
-          model: modelToUse,
-          messages,
-          stream: true,
-        }
-
-        console.log(`[Friday ${timestamp()}] Sending streaming request to Ollama`)
-        console.log(`[Friday ${timestamp()}] Endpoint: ${url}`)
-        console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
-
-        // Use XMLHttpRequest for React Native streaming compatibility
-        const fetchStartTime = Date.now()
-
-        const assistantResponse = await new Promise<string>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          let accumulator = ''
-          let lastProcessedIndex = 0
-
-          // Set 90 second timeout
-          const startTime = Date.now()
-          const checkTimeout = setInterval(() => {
-            if (Date.now() - startTime > 90000) {
-              clearInterval(checkTimeout)
-              xhr.abort()
-              reject(new Error('Request timeout - Ollama took too long to respond'))
+            const requestBody = {
+              model: modelToUse,
+              messages,
+              stream: true,
             }
-          }, 1000)
 
-          xhr.open('POST', url, true)
-          xhr.setRequestHeader('Content-Type', 'application/json')
+            console.log(`[Friday ${timestamp()}] Sending streaming request to Ollama`)
+            console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
 
-          // Handle streaming progress
-          xhr.onprogress = () => {
-            const currentText = xhr.responseText
-            const newText = currentText.slice(lastProcessedIndex)
-            lastProcessedIndex = currentText.length
+            const fetchStartTime = Date.now()
 
-            if (!newText) return
+            const response = await new Promise<string>((resolve, reject) => {
+              const xhr = new XMLHttpRequest()
+              let accumulator = ''
+              let lastProcessedIndex = 0
 
-            // Split by newline and parse JSONL format
-            const lines = newText.split('\n')
+              const xhrStartTime = Date.now()
+              const checkTimeout = setInterval(() => {
+                if (Date.now() - xhrStartTime > 90000) {
+                  clearInterval(checkTimeout)
+                  xhr.abort()
+                  reject(new Error('Request timeout - Ollama took too long to respond'))
+                }
+              }, 1000)
 
-            for (const line of lines) {
-              if (!line.trim()) continue
+              // Abort on signal
+              const onAbort = () => {
+                clearInterval(checkTimeout)
+                xhr.abort()
+              }
+              signal.addEventListener('abort', onAbort)
 
-              try {
-                const json = JSON.parse(line)
-                if (json.message?.content) {
-                  const content = json.message.content
-                  accumulator += content
+              xhr.open('POST', url, true)
+              xhr.setRequestHeader('Content-Type', 'application/json')
 
-                  // Log streaming progress
-                  if (accumulator.length % 50 === 0) {
-                    console.log(
-                      `[Friday ${timestamp()}] Received ${accumulator.length} characters`
-                    )
+              xhr.onprogress = () => {
+                const currentText = xhr.responseText
+                const newText = currentText.slice(lastProcessedIndex)
+                lastProcessedIndex = currentText.length
+
+                if (!newText) return
+
+                const lines = newText.split('\n')
+                for (const line of lines) {
+                  if (!line.trim()) continue
+                  try {
+                    const json = JSON.parse(line)
+                    if (json.message?.content) {
+                      accumulator += json.message.content
+                      if (accumulator.length % 50 === 0) {
+                        console.log(`[Friday ${timestamp()}] Received ${accumulator.length} characters`)
+                      }
+                    }
+                  } catch (e) {
+                    // Skip invalid JSON lines
                   }
                 }
-              } catch (e) {
-                // Skip invalid JSON lines
               }
-            }
+
+              xhr.onload = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  const fetchDuration = Date.now() - fetchStartTime
+                  console.log(`[Friday ${timestamp()}] Streaming completed in ${fetchDuration}ms, total: ${accumulator.length} chars`)
+                  resolve(accumulator)
+                } else {
+                  reject(new Error(`Ollama returned error ${xhr.status}: ${xhr.statusText}`))
+                }
+              }
+
+              xhr.onerror = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                reject(new Error(`Network error: ${xhr.statusText}`))
+              }
+
+              xhr.onabort = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                reject(new Error('Request aborted'))
+              }
+
+              console.log(`[Friday ${timestamp()}] Streaming response started`)
+              xhr.send(JSON.stringify(requestBody))
+            })
+
+            return response
           }
+        )
 
-          xhr.onload = () => {
-            clearInterval(checkTimeout)
-
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const fetchDuration = Date.now() - fetchStartTime
-              console.log(
-                `[Friday ${timestamp()}] Streaming completed in ${fetchDuration}ms, total response: ${accumulator.length} chars`
-              )
-              resolve(accumulator)
-            } else {
-              reject(
-                new Error(`Ollama returned error ${xhr.status}: ${xhr.statusText}`)
-              )
-            }
-          }
-
-          xhr.onerror = () => {
-            clearInterval(checkTimeout)
-            reject(new Error(`Network error: ${xhr.statusText}`))
-          }
-
-          xhr.onabort = () => {
-            clearInterval(checkTimeout)
-            reject(new Error('Request aborted'))
-          }
-
-          console.log(`[Friday ${timestamp()}] Streaming response started`)
-          xhr.send(JSON.stringify(requestBody))
-        })
+        // Track usage (Pattern 8)
+        usageTracker.trackOllama()
 
         if (!assistantResponse) {
           throw new Error('Ollama returned empty response')
@@ -389,48 +413,39 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         addMessage(assistantMessage)
 
-        // Store conversation message
         console.log(`[Friday ${timestamp()}] Storing assistant message`)
-        await memoryRef.current.addConversationMessage(
-          'assistant',
-          assistantResponse,
-          'ollama'
-        )
+        await memoryRef.current.addConversationMessage('assistant', assistantResponse, 'ollama')
 
-        // Increment interaction count
         const newCount = await memoryRef.current.incrementInteractionCount()
         setInteractionCount(newCount)
 
-        // Extract learnings from the interaction
-        const learnings = extractLearningsFromResponse(
-          userInput,
-          assistantResponse,
-          personality
-        )
-
+        // Extract and store typed learnings (Pattern 1)
+        const learnings = extractLearningsFromResponse(userInput, assistantResponse, personality)
         for (const learning of learnings) {
           await memoryRef.current.addMemory(learning.type, learning.content, learning.score)
+          usageTracker.trackMemorySaved()
         }
 
-        // Reload recent memories
         const memories = await memoryRef.current.getRecentMemories(10)
         setRecentMemories(memories)
 
+        // Invalidate memory headers cache since we may have added new ones
+        contextCache.clear(CacheKeys.MEMORY_HEADERS)
+
         const totalDuration = Date.now() - startTime
-        const ollamaStreamDuration = Date.now() - fetchStartTime
-        console.log(`[Friday ${timestamp()}] ✓ Message completed successfully (total: ${totalDuration}ms, ollama: ${ollamaStreamDuration}ms)`)
+        console.log(`[Friday ${timestamp()}] Message completed (${totalDuration}ms)`)
         return assistantResponse
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
         const totalDuration = Date.now() - startTime
-        console.error(`[Friday ${timestamp()}] ✗ Error after ${totalDuration}ms: ${error.message}`)
+        console.error(`[Friday ${timestamp()}] Error after ${totalDuration}ms: ${error.message}`)
         setError(error)
         throw error
       } finally {
         setIsLoading(false)
       }
     },
-    [personality, recentMemories, options, interactionCount, addMessage, checkOllamaHealth]
+    [personality, recentMemories, options, interactionCount, addMessage, checkOllamaHealth, loadRelevantMemories]
   )
 
   /**
@@ -447,33 +462,33 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
       const startTime = Date.now()
 
       try {
-        // Check Ollama health first
         console.log(`[Friday ${timestamp()}] Checking Ollama connection for image message...`)
         const isHealthy = await checkOllamaHealth()
         if (!isHealthy) {
+          contextCache.clear(CacheKeys.OLLAMA_HEALTH)
           throw new Error(
             `Cannot connect to Ollama at ${options.ollamaEndpoint}. ` +
             'Please ensure Ollama is running and reachable from your device.'
           )
         }
-        console.log(`[Friday ${timestamp()}] Ollama connection OK`)
 
-        // Use model override if provided, otherwise use default
         const modelToUse = modelOverride || options.ollamaModel
 
-        // Build context-aware prompt with fresh date/time
+        const relevantMemories = await loadRelevantMemories(userInput)
+
         const freshBasePrompt = buildBaseSystemPrompt()
+        const activeTasks = taskManager.getActive()
         const systemPrompt = buildFridaySystemPrompt(
           freshBasePrompt,
           personality,
-          recentMemories,
+          relevantMemories,
           options.userSettings,
           modelToUse,
           interactionCount,
-          userInput
+          userInput,
+          activeTasks
         )
 
-        // Add user message to store
         const userMessage: ConversationMessage = {
           id: `msg_${Date.now()}_user`,
           role: 'user',
@@ -483,127 +498,126 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         addMessage(userMessage)
 
-        // Store user message
         console.log(`[Friday ${timestamp()}] Storing user message with image: "${userInput}"`)
         await memoryRef.current.addConversationMessage('user', userInput, 'user')
 
-        // Call Ollama API with image included via XMLHttpRequest (React Native compatible)
-        const url = `${options.ollamaEndpoint}/api/chat`
+        // Run as tracked task (Pattern 3)
+        const assistantResponse = await taskManager.run(
+          'llm_request',
+          `Image chat: "${userInput.slice(0, 40)}..."`,
+          async (signal) => {
+            const url = `${options.ollamaEndpoint}/api/chat`
 
-        // Build messages array with full conversation history and image
-        const messages = [
-          { role: "system", content: systemPrompt },
-          ...conversationMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-          {
-            role: "user",
-            content: userInput,
-            images: [imageBase64] // Include image as base64
-          },
-        ]
+            const messages = [
+              { role: "system", content: systemPrompt },
+              ...conversationMessages.map(msg => ({
+                role: msg.role,
+                content: msg.content,
+              })),
+              {
+                role: "user",
+                content: userInput,
+                images: [imageBase64]
+              },
+            ]
 
-        const requestBody = {
-          model: modelToUse,
-          messages,
-          stream: true,
-        }
-
-        console.log(`[Friday ${timestamp()}] Sending streaming request with image to Ollama`)
-        console.log(`[Friday ${timestamp()}] Endpoint: ${url}`)
-        console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
-        console.log(`[Friday ${timestamp()}] Image size: ${imageBase64.length} characters`)
-
-        // Use XMLHttpRequest for React Native streaming compatibility
-        const fetchStartTime = Date.now()
-
-        const assistantResponse = await new Promise<string>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          let accumulator = ''
-          let lastProcessedIndex = 0
-
-          // Set 90 second timeout
-          const startTime = Date.now()
-          const checkTimeout = setInterval(() => {
-            if (Date.now() - startTime > 90000) {
-              clearInterval(checkTimeout)
-              xhr.abort()
-              reject(new Error('Request timeout - Ollama took too long to respond'))
+            const requestBody = {
+              model: modelToUse,
+              messages,
+              stream: true,
             }
-          }, 1000)
 
-          xhr.open('POST', url, true)
-          xhr.setRequestHeader('Content-Type', 'application/json')
+            console.log(`[Friday ${timestamp()}] Sending streaming request with image`)
+            console.log(`[Friday ${timestamp()}] Model: ${modelToUse}`)
+            console.log(`[Friday ${timestamp()}] Image size: ${imageBase64.length} characters`)
 
-          // Handle streaming progress
-          xhr.onprogress = () => {
-            const currentText = xhr.responseText
-            const newText = currentText.slice(lastProcessedIndex)
-            lastProcessedIndex = currentText.length
+            const fetchStartTime = Date.now()
 
-            if (!newText) return
+            const response = await new Promise<string>((resolve, reject) => {
+              const xhr = new XMLHttpRequest()
+              let accumulator = ''
+              let lastProcessedIndex = 0
 
-            // Split by newline and parse JSONL format
-            const lines = newText.split('\n')
+              const xhrStartTime = Date.now()
+              const checkTimeout = setInterval(() => {
+                if (Date.now() - xhrStartTime > 90000) {
+                  clearInterval(checkTimeout)
+                  xhr.abort()
+                  reject(new Error('Request timeout - Ollama took too long to respond'))
+                }
+              }, 1000)
 
-            for (const line of lines) {
-              if (!line.trim()) continue
+              const onAbort = () => {
+                clearInterval(checkTimeout)
+                xhr.abort()
+              }
+              signal.addEventListener('abort', onAbort)
 
-              try {
-                const json = JSON.parse(line)
-                if (json.message?.content) {
-                  const content = json.message.content
-                  accumulator += content
+              xhr.open('POST', url, true)
+              xhr.setRequestHeader('Content-Type', 'application/json')
 
-                  // Log streaming progress
-                  if (accumulator.length % 50 === 0) {
-                    console.log(
-                      `[Friday ${timestamp()}] Received ${accumulator.length} characters`
-                    )
+              xhr.onprogress = () => {
+                const currentText = xhr.responseText
+                const newText = currentText.slice(lastProcessedIndex)
+                lastProcessedIndex = currentText.length
+
+                if (!newText) return
+
+                const lines = newText.split('\n')
+                for (const line of lines) {
+                  if (!line.trim()) continue
+                  try {
+                    const json = JSON.parse(line)
+                    if (json.message?.content) {
+                      accumulator += json.message.content
+                      if (accumulator.length % 50 === 0) {
+                        console.log(`[Friday ${timestamp()}] Received ${accumulator.length} characters`)
+                      }
+                    }
+                  } catch (e) {
+                    // Skip invalid JSON lines
                   }
                 }
-              } catch (e) {
-                // Skip invalid JSON lines
               }
-            }
+
+              xhr.onload = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  const fetchDuration = Date.now() - fetchStartTime
+                  console.log(`[Friday ${timestamp()}] Image streaming completed in ${fetchDuration}ms`)
+                  resolve(accumulator)
+                } else {
+                  reject(new Error(`Ollama returned error ${xhr.status}: ${xhr.statusText}`))
+                }
+              }
+
+              xhr.onerror = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                reject(new Error(`Network error: ${xhr.statusText}`))
+              }
+
+              xhr.onabort = () => {
+                clearInterval(checkTimeout)
+                signal.removeEventListener('abort', onAbort)
+                reject(new Error('Request aborted'))
+              }
+
+              console.log(`[Friday ${timestamp()}] Streaming response started (with image)`)
+              xhr.send(JSON.stringify(requestBody))
+            })
+
+            return response
           }
+        )
 
-          xhr.onload = () => {
-            clearInterval(checkTimeout)
-
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const fetchDuration = Date.now() - fetchStartTime
-              console.log(
-                `[Friday ${timestamp()}] Image streaming completed in ${fetchDuration}ms, total response: ${accumulator.length} chars`
-              )
-              resolve(accumulator)
-            } else {
-              reject(
-                new Error(`Ollama returned error ${xhr.status}: ${xhr.statusText}`)
-              )
-            }
-          }
-
-          xhr.onerror = () => {
-            clearInterval(checkTimeout)
-            reject(new Error(`Network error: ${xhr.statusText}`))
-          }
-
-          xhr.onabort = () => {
-            clearInterval(checkTimeout)
-            reject(new Error('Request aborted'))
-          }
-
-          console.log(`[Friday ${timestamp()}] Streaming response started (with image)`)
-          xhr.send(JSON.stringify(requestBody))
-        })
+        usageTracker.trackOllama()
 
         if (!assistantResponse) {
           throw new Error('Ollama returned empty response')
         }
 
-        // Add assistant message to store
         const assistantMessage: ConversationMessage = {
           id: `msg_${Date.now()}_assistant`,
           role: 'assistant',
@@ -613,48 +627,36 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         }
         addMessage(assistantMessage)
 
-        // Store conversation message
         console.log(`[Friday ${timestamp()}] Storing assistant message (image response)`)
-        await memoryRef.current.addConversationMessage(
-          'assistant',
-          assistantResponse,
-          'ollama'
-        )
+        await memoryRef.current.addConversationMessage('assistant', assistantResponse, 'ollama')
 
-        // Increment interaction count
         const newCount = await memoryRef.current.incrementInteractionCount()
         setInteractionCount(newCount)
 
-        // Extract learnings from the interaction
-        const learnings = extractLearningsFromResponse(
-          userInput,
-          assistantResponse,
-          personality
-        )
-
+        const learnings = extractLearningsFromResponse(userInput, assistantResponse, personality)
         for (const learning of learnings) {
           await memoryRef.current.addMemory(learning.type, learning.content, learning.score)
+          usageTracker.trackMemorySaved()
         }
 
-        // Reload recent memories
         const memories = await memoryRef.current.getRecentMemories(10)
         setRecentMemories(memories)
+        contextCache.clear(CacheKeys.MEMORY_HEADERS)
 
         const totalDuration = Date.now() - startTime
-        const ollamaStreamDuration = Date.now() - fetchStartTime
-        console.log(`[Friday ${timestamp()}] ✓ Image message completed successfully (total: ${totalDuration}ms, ollama: ${ollamaStreamDuration}ms)`)
+        console.log(`[Friday ${timestamp()}] Image message completed (${totalDuration}ms)`)
         return assistantResponse
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err))
         const totalDuration = Date.now() - startTime
-        console.error(`[Friday ${timestamp()}] ✗ Error after ${totalDuration}ms: ${error.message}`)
+        console.error(`[Friday ${timestamp()}] Error after ${totalDuration}ms: ${error.message}`)
         setError(error)
         throw error
       } finally {
         setIsLoading(false)
       }
     },
-    [personality, recentMemories, options, interactionCount, addMessage, checkOllamaHealth]
+    [personality, recentMemories, options, interactionCount, addMessage, checkOllamaHealth, loadRelevantMemories]
   )
 
   /**
@@ -662,13 +664,16 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
    */
   const getSystemPrompt = useCallback(() => {
     if (!personality) return FRIDAY_SYSTEM_PROMPT.replace(/Oscar/g, options.userSettings.name || 'friend')
+    const activeTasks = taskManager.getActive()
     return buildFridaySystemPrompt(
       FRIDAY_SYSTEM_PROMPT,
       personality,
       recentMemories,
       options.userSettings,
       options.ollamaModel,
-      interactionCount
+      interactionCount,
+      undefined,
+      activeTasks
     )
   }, [personality, recentMemories, options, interactionCount])
 
@@ -693,6 +698,7 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
     if (!memoryRef.current) return
     await memoryRef.current.clearAllMemories()
     setRecentMemories([])
+    contextCache.clear(CacheKeys.MEMORY_HEADERS)
   }, [])
 
   return {
