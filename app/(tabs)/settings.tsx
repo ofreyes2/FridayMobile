@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchOllamaModels, OllamaModel, getModelLabel, formatModelSize, getOllamaEndpoint } from '@/services/ollamaModels';
+import { detect as detectKnightswatch, getConnectionMethod, ollamaUrl, type ConnectionMethod } from '@/services/knightswatch';
 import { Colors } from '@/constants/theme';
 import { UserProfile, DEFAULT_USER_PROFILE, TIMEZONES } from '@/constants/onboarding';
 import { supabase } from '@/lib/supabase';
@@ -27,13 +28,15 @@ export default function SettingsScreen() {
   const [serverStatus, setServerStatus] = useState<'online' | 'offline'>('offline');
   const [lastChecked, setLastChecked] = useState('');
   const [lastModelsRefresh, setLastModelsRefresh] = useState('');
-  const [ollamaEndpoint, setOllamaEndpoint] = useState('http://100.112.253.127:11434');
+  const [ollamaEndpoint, setOllamaEndpoint] = useState(ollamaUrl());
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingName, setEditingName] = useState('');
   const [editingTimezone, setEditingTimezone] = useState('UTC');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [timezoneSearchQuery, setTimezoneSearchQuery] = useState('');
+  const [connectionMethod, setConnectionMethod] = useState<ConnectionMethod>('Disconnected');
+  const [language, setLanguage] = useState<'en' | 'es' | 'spanglish'>('en');
 
   const loadModels = useCallback(async () => {
     try {
@@ -50,12 +53,13 @@ export default function SettingsScreen() {
 
   const checkServerStatus = useCallback(async () => {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const endpoint = await getOllamaEndpoint();
+      await detectKnightswatch();
+      setConnectionMethod(getConnectionMethod());
+      const endpoint = ollamaUrl();
       setOllamaEndpoint(endpoint);
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(`${endpoint}/api/tags`, {
         method: 'GET',
         signal: controller.signal,
@@ -64,7 +68,6 @@ export default function SettingsScreen() {
 
       if (response.ok) {
         setServerStatus('online');
-        // Optionally reload models when server comes online
       } else {
         setServerStatus('offline');
       }
@@ -76,13 +79,14 @@ export default function SettingsScreen() {
 
   const loadSettings = useCallback(async () => {
     try {
-      const [model, speak, voice, engine, profileJson, lastRefresh] = await Promise.all([
+      const [model, speak, voice, engine, profileJson, lastRefresh, savedLang] = await Promise.all([
         AsyncStorage.getItem('selectedModel'),
         AsyncStorage.getItem('autoSpeak'),
         AsyncStorage.getItem('voiceInput'),
         AsyncStorage.getItem('voiceEngine'),
         AsyncStorage.getItem('userProfile'),
         AsyncStorage.getItem('lastModelsRefresh'),
+        AsyncStorage.getItem('fridayLanguage'),
       ]);
 
       if (model) setSelectedModel(model);
@@ -107,6 +111,10 @@ export default function SettingsScreen() {
 
       if (lastRefresh) {
         setLastModelsRefresh(lastRefresh);
+      }
+
+      if (savedLang === 'en' || savedLang === 'es' || savedLang === 'spanglish') {
+        setLanguage(savedLang);
       }
 
       await loadModels();
@@ -138,6 +146,11 @@ export default function SettingsScreen() {
   const handleVoiceEngineSelect = async (engine: 'elevenlabs' | 'moira') => {
     setVoiceEngine(engine);
     await AsyncStorage.setItem('voiceEngine', engine);
+  };
+
+  const handleLanguageSelect = async (lang: 'en' | 'es' | 'spanglish') => {
+    setLanguage(lang);
+    await AsyncStorage.setItem('fridayLanguage', lang);
   };
 
   const handleOpenProfileModal = () => {
@@ -378,6 +391,11 @@ export default function SettingsScreen() {
                   {serverStatus === 'online' ? 'ONLINE' : 'OFFLINE'}
                 </Text>
               </View>
+              {connectionMethod !== 'Disconnected' && (
+                <Text style={styles.connectionMethodText}>
+                  via {connectionMethod}
+                </Text>
+              )}
             </View>
 
             <Text style={styles.urlText}>
@@ -403,6 +421,40 @@ export default function SettingsScreen() {
               <Text style={styles.refreshText}>Check Connection</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Language Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Language</Text>
+          {([
+            { key: 'en' as const, label: 'English', hint: 'Default language' },
+            { key: 'es' as const, label: 'Spanish', hint: 'Responde en espanol' },
+            { key: 'spanglish' as const, label: 'Spanglish', hint: 'Bilingual Puerto Rican energy' },
+          ]).map((lang) => (
+            <TouchableOpacity
+              key={lang.key}
+              style={[
+                styles.voiceEngineButton,
+                language === lang.key && styles.voiceEngineButtonActive,
+              ]}
+              onPress={() => handleLanguageSelect(lang.key)}
+            >
+              <View style={styles.voiceEngineContent}>
+                <Text
+                  style={[
+                    styles.voiceEngineText,
+                    language === lang.key && styles.voiceEngineTextActive,
+                  ]}
+                >
+                  {lang.label}
+                </Text>
+                <Text style={styles.voiceEngineHint}>{lang.hint}</Text>
+              </View>
+              {language === lang.key && (
+                <Text style={styles.checkmark}>✓</Text>
+              )}
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Account Section */}
@@ -692,6 +744,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     color: '#fff',
+  },
+  connectionMethodText: {
+    fontSize: 11,
+    color: Colors.accentSecondary,
+    marginLeft: 8,
   },
   urlText: {
     fontSize: 12,

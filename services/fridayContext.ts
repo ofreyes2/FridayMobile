@@ -3,6 +3,8 @@
  * Detects and injects project context into LLM requests
  */
 
+import { ollamaUrl } from '@/services/knightswatch';
+
 interface ProjectContext {
   projectName: string;
   branch: string;
@@ -28,7 +30,7 @@ const fetchProjectContextFromKnightswatch = async (): Promise<ProjectContext> =>
   try {
     // Use Promise.race with timeout to avoid hanging
     const controller = new AbortController();
-    const fetchPromise = fetch('http://100.112.253.127:11434/api/project-context', {
+    const fetchPromise = fetch(`${ollamaUrl()}/api/project-context`, {
       method: 'GET',
       signal: controller.signal,
     });
@@ -151,7 +153,7 @@ export const validateKnightswatchConnection = async (): Promise<boolean> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-    const response = await fetch('http://100.112.253.127:11434/health', {
+    const response = await fetch(`${ollamaUrl()}/health`, {
       method: 'GET',
       signal: controller.signal,
     });

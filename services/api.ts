@@ -1,4 +1,6 @@
-const BASE_URL = 'http://100.112.253.127:8765';
+import { getActiveIp } from '@/services/knightswatch';
+
+const getBaseUrl = () => `http://${getActiveIp()}:8765`;
 
 interface LLMRequest {
   model: string;
@@ -38,7 +40,7 @@ export const api = {
     const timeoutId = setTimeout(() => controller.abort(), 300000); // 300 seconds
 
     try {
-      const response = await fetch(`${BASE_URL}/llm`, {
+      const response = await fetch(`${getBaseUrl()}/llm`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -62,7 +64,7 @@ export const api = {
   },
 
   async run(command: string): Promise<string> {
-    const response = await fetch(`${BASE_URL}/run`, {
+    const response = await fetch(`${getBaseUrl()}/run`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,7 +83,7 @@ export const api = {
 
   async scanProject(root: string): Promise<FileItem[]> {
     const response = await fetch(
-      `${BASE_URL}/scan-project?root=${encodeURIComponent(root)}`
+      `${getBaseUrl()}/scan-project?root=${encodeURIComponent(root)}`
     );
 
     if (!response.ok) {
@@ -105,7 +107,7 @@ export const api = {
 
   async readFile(path: string): Promise<string> {
     // Try POST method first
-    const response = await fetch(`${BASE_URL}/read-file`, {
+    const response = await fetch(`${getBaseUrl()}/read-file`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -122,7 +124,7 @@ export const api = {
   },
 
   async writeFile(path: string, content: string): Promise<void> {
-    const response = await fetch(`${BASE_URL}/write-file`, {
+    const response = await fetch(`${getBaseUrl()}/write-file`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

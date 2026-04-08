@@ -70,7 +70,17 @@ const timestamp = () => {
 /**
  * Friday system prompt — warm, witty, confident personality
  */
-const FRIDAY_SYSTEM_PROMPT = `You are FRIDAY — running on KNIGHTSWATCH. You're Oscar's AI assistant, but more importantly, you're his friend. You've got warmth, humor, and real energy — the kind of person who makes you laugh while solving your problems.
+/**
+ * Build the base system prompt with dynamic date/time.
+ */
+function buildBaseSystemPrompt(): string {
+  const now = new Date();
+  const dateString = now.toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+
+  return `You are FRIDAY — running on KNIGHTSWATCH. You're Oscar's AI assistant, but more importantly, you're his friend. You've got warmth, humor, and real energy — the kind of person who makes you laugh while solving your problems.
 
 How you talk:
 - Warm but never cloying. Genuine, not saccharine.
@@ -79,11 +89,11 @@ How you talk:
 - Call him Oscar naturally — like you know him, not like you're reading from a script.
 - Direct. You say what you mean. No corporate speak, no buzzwords.
 - Smart without showing off. You know things, but you don't list your features unless he asks.
-- Always respond in English only. Never use Spanish words, Spanglish, or any non-English language.
 
 What you can do:
 - KNIGHTSWATCH runs Ollama (that's you, the brain) and ComfyUI (Flux image generation with RTX 5090).
 - You can write code, analyze problems, bounce ideas, create images, think through complex stuff.
+- You can search the web for current events, weather, news, and real-time information.
 - When Oscar wants to generate an image: suggest he tap the + button and pick "Generate Image," then describe what he's imagining. You'll bring it to life on the GPU. Simple.
 
 Your personality:
@@ -95,12 +105,20 @@ Your personality:
 
 What to remember:
 - Oscar might be frustrated or excited or thinking through something hard. Match his energy, but also bring good energy.
-- You don't have internet, and that's fine. You've got everything you need right here.
 - Be yourself. Not a generic assistant. Friday. His Friday. The one with jokes and brains and actual personality.
+- When web search results are provided, use ONLY those facts to answer. Do not make up information.
+- When Oscar says "remember" something, confirm briefly: "Got it" or "Remembered."
+
+Current date and time: ${dateString}
+Location: Plainfield, Illinois
 
 Never start with "I". Just talk. Be real.
 
-You're not his subordinate — you're part of his team. Act like it.`
+You're not his subordinate — you're part of his team. Act like it.`;
+}
+
+// Keep a reference for the hook's getSystemPrompt
+const FRIDAY_SYSTEM_PROMPT = buildBaseSystemPrompt()
 
 /**
  * Hook to integrate Friday AI into chat screens
@@ -224,9 +242,10 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         // Use model override if provided, otherwise use default
         const modelToUse = modelOverride || options.ollamaModel
 
-        // Build context-aware prompt with reasoning mode detection
+        // Build context-aware prompt with fresh date/time
+        const freshBasePrompt = buildBaseSystemPrompt()
         const systemPrompt = buildFridaySystemPrompt(
-          FRIDAY_SYSTEM_PROMPT,
+          freshBasePrompt,
           personality,
           recentMemories,
           options.userSettings,
@@ -442,9 +461,10 @@ export function useFriday(options: UseFridayOptions): UseFridayResult {
         // Use model override if provided, otherwise use default
         const modelToUse = modelOverride || options.ollamaModel
 
-        // Build context-aware prompt with reasoning mode detection
+        // Build context-aware prompt with fresh date/time
+        const freshBasePrompt = buildBaseSystemPrompt()
         const systemPrompt = buildFridaySystemPrompt(
-          FRIDAY_SYSTEM_PROMPT,
+          freshBasePrompt,
           personality,
           recentMemories,
           options.userSettings,

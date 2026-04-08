@@ -7,59 +7,52 @@ import {
   ELEVENLABS_MODEL,
   VOICE_SETTINGS,
 } from '@/constants/elevenlabs';
+import { ttsUrl } from '@/services/knightswatch';
 
 let currentSound: Audio.Sound | null = null;
 let isSpeakingFlag = false;
-
-// Local TTS endpoints (KNIGHTSWATCH)
-const LOCAL_TTS_ENDPOINTS = [
-  'http://192.168.1.219:8082',   // Local network
-  'http://100.112.253.127:8082', // Tailscale fallback
-];
 
 /**
  * Try local TTS service on KNIGHTSWATCH first.
  * Returns base64 WAV audio string if successful, null if failed.
  */
 const tryLocalTTS = async (text: string): Promise<string | null> => {
-  for (const endpoint of LOCAL_TTS_ENDPOINTS) {
-    try {
-      console.log(`[Voice] Trying local TTS at ${endpoint}...`);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const endpoint = ttsUrl();
+  try {
+    console.log(`[Voice] Trying local TTS at ${endpoint}...`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const response = await fetch(`${endpoint}/synthesize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-        signal: controller.signal,
-      });
+    const response = await fetch(`${endpoint}/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
 
-      clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        console.warn(`[Voice] Local TTS error ${response.status} from ${endpoint}`);
-        continue;
-      }
-
-      // Response is raw WAV bytes — convert to base64
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binaryString = '';
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binaryString += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binaryString);
-
-      console.log(`[Voice] Local TTS success from ${endpoint} (${bytes.byteLength} bytes)`);
-      return base64Audio;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.warn(`[Voice] Local TTS failed at ${endpoint}: ${msg}`);
-      continue;
+    if (!response.ok) {
+      console.warn(`[Voice] Local TTS error ${response.status} from ${endpoint}`);
+      return null;
     }
+
+    // Response is raw WAV bytes — convert to base64
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binaryString = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binaryString += String.fromCharCode(bytes[i]);
+    }
+    const base64Audio = btoa(binaryString);
+
+    console.log(`[Voice] Local TTS success from ${endpoint} (${bytes.byteLength} bytes)`);
+    return base64Audio;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[Voice] Local TTS failed at ${endpoint}: ${msg}`);
+    return null;
   }
-  return null;
 };
 
 /**

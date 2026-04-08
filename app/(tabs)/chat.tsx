@@ -58,6 +58,10 @@ import { fetchOllamaModels, getOllamaEndpoint } from '@/services/ollamaModels';
 import { generateImage } from '@/services/comfyui';
 import { checkConnectionStatus, getConnectionMessage, type ConnectionStatus } from '@/services/connectionStatus';
 import { useFriday } from '@/hooks/useFriday';
+import { detect as detectKnightswatch, ollamaUrl } from '@/services/knightswatch';
+import { getToolResponse } from '@/services/tools';
+import { shouldSearch, searchWeb, formatSearchContext } from '@/services/webSearch';
+import { saveToMemory, getLatestDream, searchRemembered } from '@/services/memory';
 import { supabase } from '@/lib/supabase';
 import {
   createSession as createSupabaseSession,
@@ -136,8 +140,8 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
   const voiceConversationRef = useRef(false);
   const [session, setSession] = useState<any>(null);
   const [authSession, setAuthSession] = useState<any>(null);
-  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>('http://100.112.253.127:11434');
-  const ollamaEndpointRef = useRef<string>('http://100.112.253.127:11434');
+  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>(ollamaUrl());
+  const ollamaEndpointRef = useRef<string>(ollamaUrl());
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [autoSwitchIndicator, setAutoSwitchIndicator] = useState<string>('');
   const [showImageGenModal, setShowImageGenModal] = useState(false);
@@ -396,15 +400,35 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
     const initializeChat = async () => {
       await loadSettings();
 
-      // Detect working Ollama endpoint (Tailscale or local network)
+      // Detect KNIGHTSWATCH (local network or Tailscale)
       try {
-        const endpoint = await getOllamaEndpoint();
+        await detectKnightswatch();
+        const endpoint = ollamaUrl();
         setOllamaEndpoint(endpoint);
         ollamaEndpointRef.current = endpoint;
-        console.log('[ChatScreen] Using Ollama endpoint:', endpoint);
+        console.log('[ChatScreen] Using KNIGHTSWATCH endpoint:', endpoint);
       } catch (error) {
-        console.error('[ChatScreen] Failed to detect endpoint:', error);
+        console.error('[ChatScreen] KNIGHTSWATCH detection failed, trying legacy:', error);
+        try {
+          const endpoint = await getOllamaEndpoint();
+          setOllamaEndpoint(endpoint);
+          ollamaEndpointRef.current = endpoint;
+        } catch {}
       }
+
+      // Check for dreams on app launch
+      try {
+        const dream = await getLatestDream();
+        if (dream && messages.length === 0) {
+          const dreamMessage: Message = {
+            id: `dream_${Date.now()}`,
+            role: 'assistant',
+            content: `While you were away, I was thinking about... ${dream}`,
+            timestamp: Date.now(),
+          };
+          setMessages((prev) => prev.length === 0 ? [dreamMessage] : prev);
+        }
+      } catch {}
 
       // Fallback: if no profile name, get it from Supabase auth
       const { data: { user } } = await supabase.auth.getUser();
@@ -1070,11 +1094,84 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
         console.log('[ChatScreen] Including image attachment');
       }
 
-      // Build the message content for Ollama API
+      // ─── Tool responses: instant answers without Ollama ───
+      const toolResponse = getToolResponse(message);
+      if (toolResponse && !attachedImage && !attachedFile) {
+        const duration = Date.now() - startTime;
+        console.log('[ChatScreen] Tool response (no LLM):', toolResponse);
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: toolResponse,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setLoading(false);
+        if (isVoiceConversation) setVoiceConversationStatus(null);
+        // Auto-speak tool response
+        if (autoSpeak) {
+          try { await speakWithFriday(toolResponse); } catch {}
+        }
+        // Save to memory API
+        try { await saveToMemory(message, toolResponse); } catch {}
+        return;
+      }
+
+      // ─── Remember feature ───
+      const lowerMsg = message.toLowerCase();
+      const isRememberSave = /remember (to|that)|don't forget/i.test(lowerMsg);
+      const isRememberRecall = /what did i ask you to remember|what do you remember/i.test(lowerMsg);
+
+      if (isRememberRecall) {
+        const remembered = await searchRemembered();
+        if (remembered) {
+          const recallMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: remembered,
+            timestamp: Date.now(),
+          };
+          setMessages((prev) => [...prev, recallMsg]);
+          setLoading(false);
+          if (isVoiceConversation) setVoiceConversationStatus(null);
+          if (autoSpeak) {
+            try { await speakWithFriday(remembered); } catch {}
+          }
+          return;
+        }
+      }
+
+      if (isRememberSave) {
+        const gotIt = 'Got it.';
+        const assistantMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: gotIt,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        setLoading(false);
+        if (isVoiceConversation) setVoiceConversationStatus(null);
+        if (autoSpeak) {
+          try { await speakWithFriday(gotIt); } catch {}
+        }
+        try { await saveToMemory(message, gotIt); } catch {}
+        return;
+      }
+
+      // ─── Web search if needed ───
       let messageContent = message;
       if (attachedFile) {
-        // Include file content in message
         messageContent = `${message}\n\n[File: ${attachedFile.name}]\n${attachedFile.content}`;
+      }
+
+      if (shouldSearch(message) && !attachedImage) {
+        console.log('[ChatScreen] Web search triggered for:', message);
+        const searchResults = await searchWeb(message);
+        if (searchResults) {
+          messageContent = formatSearchContext(searchResults, message);
+          console.log('[ChatScreen] Injected search results into context');
+        }
       }
 
       // Send message directly to Friday (which talks to Ollama)
@@ -1094,6 +1191,9 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Save to KNIGHTSWATCH memory API (non-blocking)
+      saveToMemory(message, response).catch(() => {});
 
       // Auto-detect if Friday is suggesting image generation
       const responseLower = response.toLowerCase();

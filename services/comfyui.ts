@@ -3,47 +3,15 @@
  * Handles Flux Dev image generation via ComfyUI API
  */
 
-let cachedEndpoint: string | null = null;
+import { comfyuiUrl } from '@/services/knightswatch';
 
 /**
- * Detect working ComfyUI endpoint (Tailscale or local network)
- * Tries Tailscale first, falls back to local network
+ * Get the ComfyUI endpoint from the KNIGHTSWATCH connection manager.
  */
 export const getComfyUIEndpoint = async (): Promise<string> => {
-  // Return cached endpoint if available
-  if (cachedEndpoint) {
-    return cachedEndpoint;
-  }
-
-  const endpoints = [
-    'http://100.112.253.127:8188', // Tailscale
-    'http://192.168.1.219:8188',   // Local network
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      console.log(`[ComfyUI] Trying endpoint: ${endpoint}`);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      const response = await fetch(`${endpoint}/system_stats`, {
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        console.log(`[ComfyUI] Found working endpoint: ${endpoint}`);
-        cachedEndpoint = endpoint;
-        return endpoint;
-      }
-    } catch (error) {
-      console.log(`[ComfyUI] Endpoint ${endpoint} not available`);
-    }
-  }
-
-  throw new Error('ComfyUI not found on network. Ensure ComfyUI is running on KNIGHTSWATCH.');
+  return comfyuiUrl();
 };
+
 
 /**
  * Generate image using Flux Dev model
