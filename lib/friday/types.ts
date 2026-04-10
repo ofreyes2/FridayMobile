@@ -46,6 +46,9 @@ export type FridayTaskType =
   | 'memory_save'
   | 'tts'
   | 'llm_request'
+  | 'ship_command'
+  | 'workflow'
+  | 'screen_vision'
 
 export type FridayTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'killed'
 

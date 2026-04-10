@@ -62,6 +62,8 @@ import { detect as detectKnightswatch, ollamaUrl } from '@/services/knightswatch
 import { getToolResponse } from '@/services/tools';
 import { shouldSearch, searchWeb, formatSearchContext } from '@/services/webSearch';
 import { saveToMemory, getLatestDream, searchRemembered } from '@/services/memory';
+import { parseAndExecute } from '@/services/shipComputer';
+import { startMonitoring as startAwareness, onAwarenessEvent } from '@/services/shipComputer/contextAwareness';
 import { supabase } from '@/lib/supabase';
 import {
   createSession as createSupabaseSession,
@@ -583,6 +585,28 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
     };
   }, []);
 
+  // Start Ship Computer context awareness on mount
+  useEffect(() => {
+    startAwareness();
+    const unsubscribe = onAwarenessEvent((event) => {
+      console.log(`[ShipComputer] Awareness: ${event.type} - ${event.message}`);
+      // Add awareness events as assistant messages for proactive behavior
+      if (event.type === 'battery_low' || event.type === 'battery_critical' || event.type === 'late_night') {
+        const awarenessMsg: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: event.message,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, awarenessMsg]);
+        if (autoSpeak) {
+          speakWithFriday(event.message).catch(() => {});
+        }
+      }
+    });
+    return () => { unsubscribe(); };
+  }, []);
+
   const initializeSession = async () => {
     try {
       if (!authSession?.user.id) {
@@ -1092,6 +1116,33 @@ export default function ChatScreen({ sessionId, initialMessages }: ChatScreenPro
       console.log('[ChatScreen] Sending message to Friday:', message);
       if (attachedImage) {
         console.log('[ChatScreen] Including image attachment');
+      }
+
+      // ─── Ship Computer: Mac control commands ───
+      if (!attachedImage && !attachedFile) {
+        try {
+          const shipResult = await parseAndExecute(message);
+          if (shipResult && shipResult.handled) {
+            console.log('[ChatScreen] Ship Computer handled:', shipResult.action);
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: shipResult.response,
+              timestamp: Date.now(),
+            };
+            setMessages((prev) => [...prev, assistantMessage]);
+            setLoading(false);
+            if (isVoiceConversation) setVoiceConversationStatus(null);
+            if (shipResult.speak && autoSpeak) {
+              try { await speakWithFriday(shipResult.response); } catch {}
+            }
+            try { await saveToMemory(message, shipResult.response); } catch {}
+            return;
+          }
+        } catch (err) {
+          console.warn('[ChatScreen] Ship Computer error:', err);
+          // Fall through to regular processing
+        }
       }
 
       // ─── Tool responses: instant answers without Ollama ───
