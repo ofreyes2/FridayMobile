@@ -12,11 +12,13 @@ import {
   stadiumsByLeague, getStadium, homeBaseOptions, distanceMiles, estimateDriveTime,
 } from './data.js';
 import * as Store from './storage.js';
+import { renderMap } from './map.js';
 
 const state = {
   league: 'MLB',
   filter: 'all',       // all | visited | todo
   query: '',
+  view: 'grid',        // grid | map
   home: Store.loadHome(),   // {label, lat, lng} | null
   photoIndex: {},           // stadiumId -> {count, cover}
 };
@@ -71,7 +73,38 @@ function renderHomeOptions() {
 
 function render() {
   renderProgress();
-  renderGrid();
+  const isMap = state.view === 'map';
+  // The search + visited/to-visit filters are grid tools; hide on the map.
+  $('#search').style.display = isMap ? 'none' : '';
+  $('#filters').style.display = isMap ? 'none' : '';
+  if (isMap) renderMapView();
+  else renderGrid();
+}
+
+function renderMapView() {
+  const main = $('#main');
+  main.innerHTML = '';
+  const meta = LEAGUE_META[state.league];
+  const stadiums = stadiumsByLeague(state.league);
+  const trips = Store.loadTrips();
+  const visited = countVisited(state.league);
+
+  const legend = el('div', 'map-legend', `
+    <span class="lg"><span class="dot visited"></span> Visited (${visited})</span>
+    <span class="lg"><span class="dot todo"></span> To visit (${meta.total - visited})</span>
+    ${state.home ? `<span class="lg"><span class="dot home">★</span> ${escapeHtml(state.home.label)}</span>` : ''}
+    <span class="lg hint">Tap a pin for details</span>`);
+
+  const frame = el('div', 'map-frame');
+  main.append(legend, frame);
+
+  renderMap(
+    frame,
+    stadiums,
+    (id) => ({ ...Store.emptyTrip(), ...trips[id] }),
+    (id) => openModal(id),
+    state.home,
+  );
 }
 
 function countVisited(league) {
@@ -451,6 +484,15 @@ function wireGlobal() {
       () => toast('Could not get your location'),
     );
   };
+
+  $('#viewToggle').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => {
+      state.view = b.dataset.view;
+      $('#viewToggle').querySelectorAll('button').forEach((x) =>
+        x.setAttribute('aria-pressed', String(x === b)));
+      render();
+    };
+  });
 
   $('#exportBtn').onclick = doExport;
   $('#importBtn').onclick = () => $('#importFile').click();

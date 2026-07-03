@@ -262,4 +262,40 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 12px 20px 60px; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ── Map view ───────────────────────────────────────────── */
+.map-legend {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+  margin: 18px 0 12px; font-size: 13px; color: var(--muted);
+}
+.map-legend .lg { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.map-legend .lg.hint { margin-left: auto; color: var(--faint); font-weight: 500; }
+.map-legend .dot { width: 13px; height: 13px; border-radius: 50%; display: inline-grid; place-items: center; }
+.map-legend .dot.visited { background: var(--success); }
+.map-legend .dot.todo { background: transparent; border: 2px solid var(--accent); }
+.map-legend .dot.home { background: transparent; color: var(--accent); font-size: 15px; width: auto; height: auto; }
+
+.map-frame {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 8px; overflow: hidden;
+}
+.us-map { width: 100%; height: auto; display: block; }
+.map-state {
+  fill: var(--accent-soft); stroke: var(--border); stroke-width: 1;
+  transition: fill 0.2s ease;
+}
+@media (prefers-color-scheme: dark) { .map-state { fill: rgba(255,255,255,0.05); stroke: #2a3340; } }
+
+.map-pin { cursor: pointer; outline: none; }
+.map-pin .pin-dot {
+  fill: var(--bg-elev); stroke: var(--accent); stroke-width: 2.5;
+  transition: r 0.12s ease, fill 0.12s ease;
+}
+.map-pin.visited .pin-dot { fill: var(--success); stroke: #fff; stroke-width: 1.5; }
+.map-pin .pin-check { fill: #fff; font-size: 8px; font-weight: 900; pointer-events: none; }
+.map-pin:hover .pin-dot, .map-pin:focus .pin-dot { r: 10; }
+.map-pin:focus .pin-dot { stroke-dasharray: 2 2; }
+
+.map-home .home-halo { fill: var(--accent); opacity: 0.16; }
+.map-home .home-star { fill: var(--accent); font-size: 15px; font-weight: 900; pointer-events: none; }
+
 footer { text-align: center; color: var(--faint); font-size: 12.5px; padding: 26px 20px 40px; }
