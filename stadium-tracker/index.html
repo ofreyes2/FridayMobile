@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#013369">
+  <title>Ballpark & Gridiron — Stadium Trip Tracker</title>
+  <meta name="description" content="Track every MLB and NFL stadium you've visited — notes, photos, driving distance, hotels and flights.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏟️</text></svg>">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-league="MLB">
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-logo">🏟️</div>
+        <div>
+          <h1>Ballpark &amp; Gridiron</h1>
+          <div class="sub">Your stadium bucket-list tracker — baseball &amp; football</div>
+        </div>
+        <div class="header-actions">
+          <button class="ghost-btn" id="exportBtn" title="Download a backup of your trips & photos">⬇︎ Backup</button>
+          <button class="ghost-btn" id="importBtn" title="Restore from a backup file">⬆︎ Restore</button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </div>
+  </header>
+
+  <section class="progress-wrap">
+    <div class="progress-card">
+      <div class="progress-ring" id="progressRing"></div>
+      <div class="progress-copy" id="progressCopy"></div>
+      <div class="division-bars" id="divisionBars"></div>
+    </div>
+  </section>
+
+  <div class="controls">
+    <input class="search" id="search" type="search" placeholder="Search team, stadium, or city…" aria-label="Search stadiums">
+    <div class="segmented" id="filters" role="group" aria-label="Filter">
+      <button data-filter="all" aria-pressed="true">All</button>
+      <button data-filter="todo" aria-pressed="false">To visit</button>
+      <button data-filter="visited" aria-pressed="false">Visited</button>
+    </div>
+    <select class="home-select" id="homeSelect" aria-label="Home base"></select>
+    <button class="segmented" id="useLocation" style="padding:8px 12px" title="Use my current location">📍 Use my location</button>
+  </div>
+
+  <main id="main"></main>
+
+  <footer>
+    Built as a standalone web app · data stays private in your browser · export a backup anytime.
+  </footer>
+
+  <!-- Trip detail modal -->
+  <div class="modal-backdrop" id="modalBackdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-hero" id="modalHero"></div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
