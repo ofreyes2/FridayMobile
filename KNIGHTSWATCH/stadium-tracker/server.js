@@ -77,11 +77,14 @@ const server = http.createServer((req, res) => {
   }
 });
 
-// Bind to all interfaces so the app is reachable over Tailscale / LAN,
-// not just localhost.
-server.listen(PORT, '0.0.0.0', () => {
+let announced = false;
+function onListening() {
+  if (announced) return;
+  announced = true;
   const { tailscale, lan } = reachableAddresses();
-  console.log(`\n  🏟️  Stadium Trip Tracker running\n`);
+  const addr = server.address();
+  const family = addr && addr.family === 'IPv6' ? 'IPv4 + IPv6 (dual-stack)' : 'IPv4';
+  console.log(`\n  🏟️  Stadium Trip Tracker running  [listening on all interfaces, ${family}]\n`);
   console.log(`      On this machine:  http://localhost:${PORT}`);
   for (const ip of lan) console.log(`      On your network:  http://${ip}:${PORT}`);
   if (tailscale.length) {
@@ -94,4 +97,31 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('                         (see README → "Reach it from your phone via Tailscale")');
   }
   console.log('\n      Press Ctrl+C to stop.\n');
-});
+}
+
+/**
+ * Bind to ALL interfaces on BOTH IP families so the app is reachable over the
+ * Tailscale IPv4 (100.x) *and* IPv6 / MagicDNS name, plus the LAN. Binding to
+ * '::' gives dual-stack on Linux (accepts IPv4-mapped connections too). If the
+ * host has no IPv6, fall back to IPv4-only so it still starts.
+ */
+function start(host) {
+  const onError = (err) => {
+    server.removeListener('error', onError);
+    if (host === '::' && ['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EINVAL', 'EPROTONOSUPPORT'].includes(err.code)) {
+      console.warn(`  IPv6 unavailable (${err.code}); falling back to IPv4-only.`);
+      start('0.0.0.0');
+      return;
+    }
+    console.error(`  Failed to start on port ${PORT}: ${err.code || err.message}`);
+    if (err.code === 'EADDRINUSE') console.error(`  Port ${PORT} is already in use.`);
+    process.exit(1);
+  };
+  server.once('error', onError);
+  server.listen(PORT, host, () => {
+    server.removeListener('error', onError);
+    onListening();
+  });
+}
+
+start('::');
