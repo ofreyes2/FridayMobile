@@ -38,6 +38,53 @@ PORT=8080 node server.js
 Then open the printed URL. Everything is client-side; the server only serves
 static files.
 
+## Reach it from your phone via Tailscale
+
+Tailscale gives every **device** on your tailnet a stable `100.x.x.x` address.
+Run this server on a machine that's on your tailnet, and you can open the app
+from your phone (or any other device on the tailnet) at that machine's address
+— no port forwarding, no public exposure.
+
+One-time setup on the host machine (laptop, mini-PC, Raspberry Pi, etc.):
+
+1. Install Node.js and copy this `stadium-tracker/` folder onto the machine
+   (e.g. `git clone` this repo).
+2. Install Tailscale and sign in:
+   ```bash
+   # macOS: brew install --cask tailscale     Linux: https://tailscale.com/download
+   tailscale up
+   tailscale ip -4        # shows this machine's 100.x.x.x address
+   ```
+3. Start the server (it binds to all interfaces automatically):
+   ```bash
+   node server.js
+   ```
+   On startup it prints the exact Tailscale URL, e.g.:
+   ```
+   🔒 Tailscale:  http://100.101.102.103:5280   ← reach this from your phone
+   ```
+4. On your phone (with the Tailscale app installed and logged into the **same**
+   account), open that `http://100.x.x.x:5280` URL. Done.
+
+### Nicer: a hostname + HTTPS instead of an IP
+
+Tailscale can proxy the app over HTTPS at your machine's MagicDNS name, so you
+get a clean URL and a valid certificate:
+
+```bash
+tailscale serve --bg 5280
+# → https://<your-machine-name>.<your-tailnet>.ts.net
+```
+
+Open that URL from any device on the tailnet. Run `tailscale serve status` to
+see it, and `tailscale serve --https=443 off` to stop.
+
+> Note: your trips, notes, and photos are stored **per browser/device** (in
+> localStorage + IndexedDB). Reaching the same server from your phone and your
+> laptop gives each its own local data — use **Backup** on one and **Restore**
+> on the other to copy everything across. (Cross-device sync is a natural next
+> step — see below.)
+
 ## Project structure
 
 ```

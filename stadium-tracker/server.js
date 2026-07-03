@@ -11,6 +11,26 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+
+/**
+ * Collect the machine's reachable IPv4 addresses, flagging any Tailscale
+ * address (the 100.64.0.0/10 CGNAT range Tailscale hands out).
+ */
+function reachableAddresses() {
+  const tailscale = [];
+  const lan = [];
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const net of ifaces[name] || []) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      const [a, b] = net.address.split('.').map(Number);
+      const isTailscale = a === 100 && b >= 64 && b <= 127; // 100.64.0.0/10
+      (isTailscale ? tailscale : lan).push(net.address);
+    }
+  }
+  return { tailscale, lan };
+}
 
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT || process.argv[2] || 5280);
@@ -57,8 +77,21 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🏟️  Stadium Trip Tracker running`);
-  console.log(`      http://localhost:${PORT}\n`);
-  console.log('      Press Ctrl+C to stop.\n');
+// Bind to all interfaces so the app is reachable over Tailscale / LAN,
+// not just localhost.
+server.listen(PORT, '0.0.0.0', () => {
+  const { tailscale, lan } = reachableAddresses();
+  console.log(`\n  🏟️  Stadium Trip Tracker running\n`);
+  console.log(`      On this machine:  http://localhost:${PORT}`);
+  for (const ip of lan) console.log(`      On your network:  http://${ip}:${PORT}`);
+  if (tailscale.length) {
+    console.log('');
+    for (const ip of tailscale) console.log(`      🔒 Tailscale:      http://${ip}:${PORT}   ← reach this from your phone`);
+  } else {
+    console.log('');
+    console.log('      🔒 Tailscale:      not detected on this machine.');
+    console.log('                         Install Tailscale + run `tailscale up`, then restart.');
+    console.log('                         (see README → "Reach it from your phone via Tailscale")');
+  }
+  console.log('\n      Press Ctrl+C to stop.\n');
 });
