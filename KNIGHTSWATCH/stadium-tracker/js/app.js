@@ -13,6 +13,7 @@ import {
 } from './data.js';
 import * as Store from './storage.js';
 import { renderMap } from './map.js';
+import * as Sync from './sync.js';
 
 const state = {
   league: 'MLB',
@@ -39,6 +40,24 @@ async function boot() {
   renderHomeOptions();
   render();
   wireGlobal();
+  maybeAutoSync();
+}
+
+/** For returning signed-in users, restore the session and sync in the
+ *  background — never blocks first paint, silently no-ops if offline. */
+async function maybeAutoSync() {
+  if (!Sync.syncWasEnabled()) return;
+  try {
+    const user = await Sync.restore();
+    if (!user) return;
+    updateSyncBadge();
+    const summary = await Sync.fullSync();
+    state.photoIndex = await Store.getPhotoIndex();
+    render(); renderChrome();
+    if (summary.tripsPulled || summary.photosPulled) {
+      toast(`Synced ${summary.tripsPulled} trips · ${summary.photosPulled} photos`);
+    }
+  } catch { /* offline or not set up — stay local */ }
 }
 
 // ─── Static chrome (tabs, controls) ─────────────────────────────────────
@@ -235,6 +254,7 @@ function quickToggle(id) {
   trip.visited = !trip.visited;
   if (trip.visited && !trip.date) trip.date = new Date().toISOString().slice(0, 10);
   Store.saveTrip(id, trip);
+  Sync.pushTrip(id, Store.getTrip(id));
   render();
   renderChrome();
   toast(trip.visited ? 'Marked as visited ✓' : 'Moved back to bucket list');
@@ -315,6 +335,7 @@ async function openModal(id) {
     t.visited = !t.visited;
     if (t.visited && !t.date) t.date = new Date().toISOString().slice(0, 10);
     Store.saveTrip(id, t);
+    Sync.pushTrip(id, Store.getTrip(id));
     openModal(id); // re-render toggle + date
     render(); renderChrome();
   };
@@ -324,6 +345,7 @@ async function openModal(id) {
       const t = collectModal();
       t.rating = t.rating === v ? 0 : v;
       Store.saveTrip(id, t);
+      Sync.pushTrip(id, Store.getTrip(id));
       $('#mStars').querySelectorAll('.s').forEach((x, i) =>
         x.classList.toggle('on', i < t.rating));
     };
@@ -352,6 +374,7 @@ function collectModal() {
 function saveModal() {
   if (!modalId) return;
   Store.saveTrip(modalId, collectModal());
+  Sync.pushTrip(modalId, Store.getTrip(modalId));
   const flash = $('#mFlash');
   flash.classList.add('show');
   setTimeout(() => flash.classList.remove('show'), 1200);
@@ -374,6 +397,7 @@ async function renderPhotos(id) {
       <button class="del" title="Delete photo">✕</button>`;
     cell.querySelector('.del').onclick = async () => {
       await Store.deletePhoto(p.key);
+      Sync.deletePhotoRemote(p.id);
       state.photoIndex = await Store.getPhotoIndex();
       await renderPhotos(id);
       renderGrid();
@@ -389,7 +413,8 @@ async function handleUpload(id, files) {
   for (const file of list) {
     try {
       const dataUrl = await downscale(file, 1400, 0.82);
-      await Store.addPhoto(id, dataUrl);
+      const photo = await Store.addPhoto(id, dataUrl);
+      Sync.pushPhoto(photo);
     } catch {
       toast('Could not read a photo');
     }
@@ -449,6 +474,114 @@ function flightsUrl(s) {
   return `https://www.google.com/travel/flights?q=${encodeURIComponent('flights to ' + s.city + ' ' + s.state)}`;
 }
 
+// ─── Sync / account UI ──────────────────────────────────────────────────
+
+function updateSyncBadge() {
+  const btn = $('#syncBtn');
+  const user = Sync.currentUser();
+  btn.textContent = user ? '☁︎ Synced' : '☁︎ Sync';
+  btn.style.opacity = user ? '1' : '';
+}
+
+function openSyncModal() {
+  renderSyncBody();
+  $('#syncBackdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSyncModal() {
+  $('#syncBackdrop').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function renderSyncBody() {
+  const body = $('#syncBody');
+  const user = Sync.currentUser();
+
+  if (user) {
+    body.innerHTML = `
+      <div class="dist-callout">✅ Signed in as <strong>${escapeHtml(user.email || 'your account')}</strong>.
+        Changes on any device sync automatically.</div>
+      <div class="travel-links">
+        <button class="link-btn" id="syncNow">🔄 Sync now</button>
+        <button class="link-btn" id="signOut">Sign out</button>
+      </div>
+      <p style="color:var(--faint);font-size:12.5px;margin:0">
+        Tip: photos and notes merge across devices. Deleting a photo removes it from the
+        cloud too.</p>`;
+    $('#syncNow').onclick = runManualSync;
+    $('#signOut').onclick = async () => {
+      try { await Sync.signOut(); } catch {}
+      updateSyncBadge();
+      renderSyncBody();
+      toast('Signed out — your data stays on this device');
+    };
+    return;
+  }
+
+  body.innerHTML = `
+    <p style="color:var(--muted);font-size:13.5px;margin:0 0 4px">
+      Create a free account (or sign in) to back up your stadium trips and see them on your
+      phone and computer.</p>
+    <div class="field"><label>Email</label>
+      <input id="syncEmail" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="field"><label>Password</label>
+      <input id="syncPass" type="password" autocomplete="current-password" placeholder="At least 6 characters"></div>
+    <div id="syncMsg" style="font-size:13px;min-height:16px"></div>
+    <div class="travel-links">
+      <button class="link-btn" id="doSignIn" style="border-color:var(--accent);color:var(--accent)">Sign in</button>
+      <button class="link-btn" id="doSignUp">Create account</button>
+    </div>
+    <p style="color:var(--faint);font-size:12px;margin:0">
+      One-time setup: run <code>supabase-sync.sql</code> in your Supabase project so the
+      sync tables exist.</p>`;
+
+  const msg = (t, ok) => {
+    const m = $('#syncMsg');
+    m.textContent = t;
+    m.style.color = ok ? 'var(--success)' : 'var(--error)';
+  };
+  const creds = () => ({ email: $('#syncEmail').value.trim(), pass: $('#syncPass').value });
+
+  $('#doSignIn').onclick = async () => {
+    const { email, pass } = creds();
+    if (!email || !pass) return msg('Enter your email and password.');
+    msg('Signing in…', true);
+    try {
+      await Sync.signIn(email, pass);
+      updateSyncBadge();
+      await runManualSync();
+      renderSyncBody();
+    } catch (e) { msg(e.message || 'Sign in failed.'); }
+  };
+  $('#doSignUp').onclick = async () => {
+    const { email, pass } = creds();
+    if (!email || pass.length < 6) return msg('Use an email and a 6+ character password.');
+    msg('Creating account…', true);
+    try {
+      const { needsConfirmation } = await Sync.signUp(email, pass);
+      if (needsConfirmation) {
+        msg('Account created — check your email to confirm, then sign in.', true);
+      } else {
+        updateSyncBadge();
+        await runManualSync();
+        renderSyncBody();
+      }
+    } catch (e) { msg(e.message || 'Sign up failed.'); }
+  };
+}
+
+async function runManualSync() {
+  toast('Syncing…');
+  try {
+    const s = await Sync.fullSync();
+    state.photoIndex = await Store.getPhotoIndex();
+    render(); renderChrome(); updateSyncBadge();
+    toast(`Synced ✓ (${s.tripsPushed + s.tripsPulled} trips, ${s.photosPushed + s.photosPulled} photos)`);
+  } catch (e) {
+    toast(e.message || 'Sync failed');
+  }
+}
+
 // ─── Global wiring ──────────────────────────────────────────────────────
 
 function wireGlobal() {
@@ -498,10 +631,18 @@ function wireGlobal() {
   $('#importBtn').onclick = () => $('#importFile').click();
   $('#importFile').addEventListener('change', doImport);
 
+  $('#syncBtn').onclick = openSyncModal;
+  $('#syncClose').onclick = closeSyncModal;
+  $('#syncBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#syncBackdrop')) closeSyncModal();
+  });
+
   $('#modalBackdrop').addEventListener('click', (e) => {
     if (e.target === $('#modalBackdrop')) closeModal();
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeModal(); closeSyncModal(); }
+  });
 }
 
 async function doExport() {
@@ -527,6 +668,7 @@ async function doImport(e) {
     renderHomeOptions();
     render(); renderChrome();
     toast('Backup restored ✓');
+    if (Sync.currentUser()) runManualSync();
   } catch (err) {
     toast('Import failed: ' + err.message);
   } finally {

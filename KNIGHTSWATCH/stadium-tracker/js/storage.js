@@ -23,10 +23,23 @@ const DB_STORE = 'photos';
  * @property {string} notes
  * @property {string} hotel     hotel / resort where you stayed
  * @property {string} flight    flight / travel details
+ * @property {string} updatedAt ISO timestamp of last local edit (drives sync)
  */
 
 export function emptyTrip() {
-  return { visited: false, date: '', rating: 0, notes: '', hotel: '', flight: '' };
+  return { visited: false, date: '', rating: 0, notes: '', hotel: '', flight: '', updatedAt: '' };
+}
+
+/** UUID v4 — uses crypto.randomUUID when available (secure contexts), else a
+ *  Math.random fallback so it also works over plain http:// on a Tailscale IP. */
+export function uuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    try { return crypto.randomUUID(); } catch { /* fall through */ }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 // ─── Trip records (localStorage) ────────────────────────────────────────
@@ -45,9 +58,16 @@ export function getTrip(id) {
   return { ...emptyTrip(), ...(trips[id] || {}) };
 }
 
-export function saveTrip(id, record) {
+/**
+ * Persist a trip. By default stamps updatedAt = now (a local edit). Pass
+ * { bump: false } when applying a record pulled from the server so the
+ * server's own updatedAt is preserved for last-write-wins.
+ */
+export function saveTrip(id, record, { bump = true } = {}) {
   const trips = loadTrips();
-  trips[id] = { ...emptyTrip(), ...record };
+  const next = { ...emptyTrip(), ...record };
+  if (bump) next.updatedAt = new Date().toISOString();
+  trips[id] = next;
   localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
@@ -104,11 +124,44 @@ export async function getPhotos(stadiumId) {
   });
 }
 
+/**
+ * Add a photo. Returns the stored record including its stable `id` (used to
+ * dedupe across devices during sync) and IndexedDB `key`.
+ */
 export async function addPhoto(stadiumId, dataUrl, caption = '') {
+  const id = uuid();
+  const addedAt = new Date().toISOString();
   const store = await tx('readwrite');
   return new Promise((resolve, reject) => {
-    const req = store.add({ stadiumId, dataUrl, caption, addedAt: new Date().toISOString() });
+    const rec = { id, stadiumId, dataUrl, caption, addedAt };
+    const req = store.add(rec);
+    req.onsuccess = () => resolve({ ...rec, key: req.result });
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** Add a photo with a known id (used when pulling from the cloud). No-op if id already present. */
+export async function addPhotoWithId(id, stadiumId, dataUrl, caption = '', addedAt) {
+  const store = await tx('readwrite');
+  return new Promise((resolve, reject) => {
+    const req = store.add({ id, stadiumId, dataUrl, caption, addedAt: addedAt || new Date().toISOString() });
     req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** All photos across every stadium (for sync upload). */
+export async function getAllPhotos() {
+  const store = await tx('readonly');
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const req = store.openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return resolve(out);
+      out.push({ key: c.key, ...c.value });
+      c.continue();
+    };
     req.onerror = () => reject(req.error);
   });
 }

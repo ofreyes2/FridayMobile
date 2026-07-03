@@ -29,7 +29,7 @@ structured so the "bones" convert cleanly into a native mobile app later.
 Requires Node.js (no npm install — zero dependencies).
 
 ```bash
-cd stadium-tracker
+cd KNIGHTSWATCH/stadium-tracker
 node server.js            # → http://localhost:5280
 # or choose a port:
 PORT=8080 node server.js
@@ -37,6 +37,73 @@ PORT=8080 node server.js
 
 Then open the printed URL. Everything is client-side; the server only serves
 static files.
+
+## Cloud sync across devices (Supabase)
+
+By default your data lives only in the browser you're using. Turn on **☁︎ Sync**
+(top-right) to back it up and mirror it across your phone and computer.
+
+The app stays **local-first**: everything keeps working offline, and the
+Supabase SDK is only loaded when you enable sync. When signed in, trips/notes
+sync with last-write-wins and photos merge additively across devices.
+
+One-time setup:
+
+1. In your Supabase project, open the **SQL Editor** and run
+   [`supabase-sync.sql`](./supabase-sync.sql) (creates `stadium_trips` and
+   `stadium_photos` with row-level security so each account sees only its own
+   data). This reuses the same Supabase project as the Friday app; to use a
+   different project, edit the URL + anon key at the top of `js/sync.js`.
+2. In the app, click **☁︎ Sync → Create account**, then sign in on each device
+   with the same email. That's it — changes propagate automatically.
+
+Data model:
+
+| Table | Rows |
+| --- | --- |
+| `stadium_trips` | one per (user, stadium): visited, date, rating, notes, hotel, flight, `updated_at` |
+| `stadium_photos` | one per photo: client-generated `id`, `stadium_id`, downscaled JPEG `data_url`, caption |
+
+## Deploying on KNIGHTSWATCH
+
+KNIGHTSWATCH is the home server (local `192.168.1.219`, Tailscale
+`100.112.253.127`) that already runs the Friday services (Ollama :11434,
+TTS :8082, memory :8081, ComfyUI :8188). Run the tracker there too:
+
+```bash
+# on KNIGHTSWATCH
+cd KNIGHTSWATCH/stadium-tracker
+node server.js            # serves on :5280, binds 0.0.0.0
+```
+
+Then reach it from anywhere on the tailnet:
+
+- **Tailscale:** http://100.112.253.127:5280
+- **On the home LAN:** http://192.168.1.219:5280
+
+### Tightened Tailscale ACL — add port 5280
+
+Because the tailnet ACL is locked down (not the default allow-all), a new port
+won't be reachable until you grant it, exactly like the existing KNIGHTSWATCH
+ports. Add `5280` to the same grant. For example, in the ACL's `grants` (or the
+older `acls`) block, extend the KNIGHTSWATCH destination ports:
+
+```jsonc
+{
+  "grants": [
+    {
+      "src": ["autogroup:member"],           // or your user / devices
+      "dst": ["100.112.253.127"],            // KNIGHTSWATCH
+      "ip":  ["tcp:11434", "tcp:8082", "tcp:8081", "tcp:8188", "tcp:5280"]
+      //                                                        ^ add this
+    }
+  ]
+}
+```
+
+(Old-style syntax: add `"100.112.253.127:5280"` to the rule's `dst` list.)
+Save the ACL in the Tailscale admin console; no client restart needed. Test
+from your phone with the Tailscale app connected.
 
 ## Reach it from your phone via Tailscale
 
@@ -94,7 +161,13 @@ stadium-tracker/
 ├── js/
 │   ├── data.js         # stadium dataset + geo/distance helpers  (data layer)
 │   ├── storage.js      # localStorage + IndexedDB persistence     (storage layer)
-│   └── app.js          # rendering & interactions                 (view layer)
+│   ├── sync.js         # Supabase cloud sync (lazy-loaded)        (sync layer)
+│   ├── map.js          # inline SVG US map + Albers projection    (view layer)
+│   ├── us-geo.js       # bundled lower-48 state outlines (GeoJSON)
+│   ├── app.js          # rendering & interactions                 (view layer)
+│   └── vendor/
+│       └── supabase.js # vendored Supabase JS SDK (loaded only when syncing)
+├── supabase-sync.sql   # cloud sync tables + row-level security
 ├── server.js           # zero-dep static server on its own port
 └── README.md
 ```
@@ -109,7 +182,8 @@ Native (or Expo — like the Friday app) with minimal rework:
 2. **`storage.js`** is the single seam that touches persistence. It exposes an
    async interface (`getTrip`, `saveTrip`, `getPhotos`, `addPhoto`,
    `exportAll`, …). Swap its body for your backend REST calls or native device
-   storage and nothing else changes.
+   storage and nothing else changes. **`sync.js`** already layers Supabase on
+   top of it — the same client/tables work from a native app.
 3. **`app.js`** render functions map 1:1 onto components: the card, the
    progress ring, the trip modal, the photo grid. The external Maps/hotels/
    flights links become deep links or in-app screens.

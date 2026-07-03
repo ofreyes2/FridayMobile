@@ -19,6 +19,7 @@
           <div class="sub">Your stadium bucket-list tracker — baseball &amp; football</div>
         </div>
         <div class="header-actions">
+          <button class="ghost-btn" id="syncBtn" title="Sync across devices">☁︎ Sync</button>
           <button class="ghost-btn" id="exportBtn" title="Download a backup of your trips & photos">⬇︎ Backup</button>
           <button class="ghost-btn" id="importBtn" title="Restore from a backup file">⬆︎ Restore</button>
           <input type="file" id="importFile" accept="application/json" hidden>
@@ -62,6 +63,21 @@
     <div class="modal">
       <div class="modal-hero" id="modalHero"></div>
       <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Sync / account modal -->
+  <div class="modal-backdrop" id="syncBackdrop" role="dialog" aria-modal="true">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-hero" id="syncHero">
+        <div>
+          <div class="m-team">☁︎ Cloud sync</div>
+          <h3>Sync across devices</h3>
+          <div class="m-city">Your trips, notes &amp; photos on every device</div>
+        </div>
+        <button class="modal-close" id="syncClose" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="syncBody"></div>
     </div>
   </div>
 
