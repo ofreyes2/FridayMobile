@@ -81,6 +81,35 @@ Then reach it from anywhere on the tailnet:
 - **Tailscale:** http://100.112.253.127:5280
 - **On the home LAN:** http://192.168.1.219:5280
 
+### Auto-start on boot (systemd)
+
+Install it as a service so it starts on boot and restarts if it ever crashes:
+
+```bash
+cd KNIGHTSWATCH/stadium-tracker
+./deploy/install-service.sh          # detects node path, user, dir; asks for sudo
+# PORT=8080 ./deploy/install-service.sh   # custom port
+```
+
+The installer renders [`deploy/stadium-tracker.service`](./deploy/stadium-tracker.service)
+(filling in the run-user, working directory, absolute `node` path, and port),
+writes it to `/etc/systemd/system/`, then enables and starts it. It runs as
+**your** login user (not root), waits for the network + `tailscaled`, and uses
+`Restart=always`. Preview without installing via `--dry-run`.
+
+Manage it:
+
+```bash
+sudo systemctl status stadium-tracker
+sudo systemctl restart stadium-tracker
+journalctl -u stadium-tracker -f            # live logs
+./deploy/install-service.sh --uninstall
+```
+
+> Node under nvm/fnm/volta? The installer resolves the absolute node path from
+> your login shell (even when run through sudo), so the unit points at the real
+> binary. If you later change Node versions, re-run the installer.
+
 ### Tightened Tailscale ACL — add port 5280
 
 Because the tailnet ACL is locked down (not the default allow-all), a new port
@@ -169,6 +198,9 @@ stadium-tracker/
 │       └── supabase.js # vendored Supabase JS SDK (loaded only when syncing)
 ├── supabase-sync.sql   # cloud sync tables + row-level security
 ├── server.js           # zero-dep static server on its own port
+├── deploy/
+│   ├── stadium-tracker.service   # systemd unit template
+│   └── install-service.sh        # one-command auto-start installer
 └── README.md
 ```
 

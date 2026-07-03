@@ -1,0 +1,30 @@
+# systemd unit for the Stadium Trip Tracker.
+#
+# This is a TEMPLATE — the __PLACEHOLDERS__ are filled in by install-service.sh.
+# To install by hand, copy this file to /etc/systemd/system/stadium-tracker.service,
+# replace the placeholders, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stadium-tracker
+
+[Unit]
+Description=Ballpark & Gridiron - Stadium Trip Tracker
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+Environment=PORT=__PORT__
+ExecStart=__NODE__ server.js
+Restart=always
+RestartSec=3
+
+# Light hardening (the server writes nothing to disk; all data lives in the
+# browser). Do NOT add ProtectHome — the app dir usually lives under /home.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
